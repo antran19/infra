@@ -1,0 +1,29 @@
+{
+	"folders": [
+		{
+			"name": "API Gateway",
+			"path": "../api-gateway"
+		},
+		{
+			"name": "Discovery Server",
+			"path": "../discovery-server"
+		},
+		{
+			"name": "User Service",
+			"path": "../user-service"
+		},
+		{
+			"name": "Catalog Service",
+			"path": "../catalog-service"
+		},
+		{
+			"name": "Common Libraries",
+			"path": "../common-libs"
+		},
+		{
+			"name": "Infrastructure",
+			"path": "."
+		}
+	],
+	"settings": {}
+}
