@@ -2,7 +2,7 @@
 
 Local docker-compose setup that runs Project Nexus's full microservice cluster
 (polyrepo team submission). No single service repo owns "the whole system", so this repo
-holds that: Postgres (x2), Kafka, and all 4 application services wired together.
+holds that: Postgres (x3), Kafka, and all 5 application services wired together.
 
 See [`docs/adr/0001-polyrepo-for-team-submission.md`](docs/adr/0001-polyrepo-for-team-submission.md)
 for why this is a separate repo instead of a monorepo.
@@ -18,6 +18,7 @@ FPT/
   api-gateway/
   user-service/
   catalog-service/
+  auction-service/
   infra/          <- this repo
 ```
 
@@ -34,7 +35,8 @@ pre-built `target/*.jar` — no Maven build happens inside Docker, so no GitHub 
 token needs to reach the image build.
 
 Once up: Eureka dashboard at `http://localhost:8761`, gateway at `http://localhost:8080`,
-`user-service` directly at `:8081`, `catalog-service` directly at `:8082`.
+`user-service` directly at `:8081`, `catalog-service` directly at `:8082`,
+`auction-service` directly at `:8083`.
 
 ## Follow-up (not done yet)
 
