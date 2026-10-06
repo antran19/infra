@@ -41,6 +41,20 @@ services:
       timeout: 5s
       retries: 10
 
+  postgres-notification:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: notification_db
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus
+    ports:
+      - "5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d notification_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   kafka:
     image: apache/kafka:3.7.1
     ports:
@@ -124,3 +138,20 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     ports:
       - "8083:8083"
+
+  notification-service:
+    build:
+      context: ../notification-service
+    depends_on:
+      postgres-notification:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+      kafka:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-notification:5432/notification_db
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    ports:
+      - "8084:8084"

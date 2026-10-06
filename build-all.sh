@@ -10,7 +10,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-for repo in common-libs discovery-server api-gateway user-service catalog-service auction-service; do
+for repo in common-libs discovery-server api-gateway user-service catalog-service auction-service notification-service; do
   if [ ! -d "../$repo" ]; then
     echo "Missing ../$repo -- clone it as a sibling of this infra repo first." >&2
     exit 1
@@ -20,7 +20,7 @@ done
 echo "==> common-libs: mvn clean install"
 (cd ../common-libs && mvn -q clean install -DskipTests)
 
-for repo in discovery-server api-gateway user-service catalog-service auction-service; do
+for repo in discovery-server api-gateway user-service catalog-service auction-service notification-service; do
   echo "==> $repo: mvn clean package"
   (cd "../$repo" && mvn -q clean package -DskipTests)
 done
