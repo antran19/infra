@@ -136,6 +136,8 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-auction:5432/auction_db
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Read from infra/.env (gitignored) -- never hardcode a real key here, this file is committed.
+      NEXUS_PAYMENT_STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
     ports:
       - "8083:8083"
 
