@@ -55,6 +55,20 @@ services:
       timeout: 5s
       retries: 10
 
+  postgres-commerce:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: commerce_db
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus
+    ports:
+      - "5436:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d commerce_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   kafka:
     image: apache/kafka:3.7.1
     ports:
@@ -136,8 +150,6 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-auction:5432/auction_db
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      # Read from infra/.env (gitignored) -- never hardcode a real key here, this file is committed.
-      NEXUS_PAYMENT_STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
     ports:
       - "8083:8083"
 
@@ -157,3 +169,22 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     ports:
       - "8084:8084"
+
+  commerce-service:
+    build:
+      context: ../commerce-service
+    depends_on:
+      postgres-commerce:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+      kafka:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-commerce:5432/commerce_db
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Read from infra/.env (gitignored) -- never hardcode a real key here, this file is committed.
+      NEXUS_PAYMENT_STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+    ports:
+      - "8085:8085"
