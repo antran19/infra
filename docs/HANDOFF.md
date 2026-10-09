@@ -217,13 +217,24 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      nhận happy path (Bid→AuctionWon→order→Stripe→OrderPaid→MarkAuctionPaid) đúng, có
      idempotency tốt; `MAX_ACTIVE_AUCTIONS_PER_SELLER` thực ra ĐÃ enforce đúng (ghi chú cũ ở
      mục 4 nói "cần xác minh lại" là sai, đã sửa). Tìm ra 3 gap, đã fix gap #1 (xem
-     catalog-service ở trên). Gap #2 và #3 CHƯA làm, liệt kê bên dưới.
+     catalog-service ở trên). Gap #2 và #3 lúc đó CHƯA làm.
+   - ✅ (2026-10-09) **Gap #3 đã fix**: `OrderCancelledEvent` giờ mang thêm `auctionId`
+     (null cho order mua trực tiếp); `CommerceEventsListener` bên auction-service xử lý
+     thêm `OrderCancelled` → gọi ngay `EmitPaymentTimeoutUseCase.emit()` (dùng lại y
+     nguyên use case idempotent mà `PaymentDeadlineJob` dùng, không phát sinh rule mới) —
+     buyer huỷ order trước hạn thanh toán giờ bị trừ điểm uy tín **ngay lập tức**, không
+     cần chờ 24h. Verify sống đầy đủ: huỷ order → điểm uy tín giảm 50→40
+     (TRUSTED→NORMAL) trong vài giây. **Phát hiện và fix thêm 1 bug có từ trước** trong lúc
+     verify sống: `CancelOrderUseCase.cancel()` thiếu `@Transactional` nên
+     `findByIdForUpdate` (dùng `PESSIMISTIC_WRITE` lock) ném `TransactionRequiredException`
+     ở MỌI lần gọi thật — bị che khuất vì test duy nhất của use case này mock repository,
+     không chạm lock thật (giống đúng kiểu bug LazyInitializationException đã gặp trước đó
+     trong dự án). Bump common-libs 1.6.0→1.7.0. Commit `c8c4ceb` (commerce-service) +
+     `32f6940` (auction-service).
    - ⬜ Gap #2: không có relist/second-chance khi người thắng bùng kèo (auction kết thúc
-     vĩnh viễn ở ENDED, hàng "mất trắng", chỉ người bùng kèo bị trừ điểm uy tín).
-   - ⬜ Gap #3: buyer tự huỷ order trước hạn thanh toán không đồng bộ ngược về
-     auction-service (`OrderCancelledEvent` không mang `auctionId`, `CommerceEventsListener`
-     bên auction-service chỉ xử lý `OrderPaid`) — auction vẫn treo tới khi tự hết 24h mới
-     phát hiện timeout. Ảnh hưởng độ trễ, không ảnh hưởng tính đúng của dữ liệu.
+     vĩnh viễn ở ENDED, hàng "mất trắng", chỉ người bùng kèo bị trừ điểm uy tín). Chưa làm
+     vì SRS không yêu cầu cụ thể cơ chế này — cần thống nhất với user trước khi tự chế
+     thêm rule.
    - ⬜ Push notification thật.
    - ⬜ Refund thật, invoice.
    - ⬜ Fulfillment Service.
