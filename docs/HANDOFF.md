@@ -125,8 +125,7 @@ toán Stripe thật (checkout session + confirm, idempotent), huỷ order (chỉ
 ⚠️/❌ **Không có refund thật** (huỷ order đã thanh toán chỉ là out-of-scope có chủ đích, chưa
 code), **không có invoice/receipt**, **không có Admin xem tất cả order** (chỉ xem order của
 chính mình), cart không re-validate giá/tồn kho lúc checkout, chưa có cart-expiration job.
-**🔴 BUG: `api-gateway` chưa có route cho commerce-service** — gọi qua gateway (`:8080`) sẽ
-không tới được, phải gọi thẳng `:8085`. Cần sửa `api-gateway/src/main/resources/application.yml`.
+(Bug route gateway đã fix 2026-10-09, xem mục 6.)
 
 ### notification-service (port 8084)
 ✅ Tự động ghi log mọi event nghe được từ Kafka (`auction-events`/`catalog-events`/
@@ -160,7 +159,9 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
 
 ## 6. Việc đang làm / tiếp theo (thứ tự ưu tiên đã thống nhất với user, 2026-10-09)
 
-1. ⬜ Sửa route `api-gateway` cho commerce-service (bug, không phải thiếu tính năng).
+1. ✅ (2026-10-09) Sửa route `api-gateway` cho commerce-service — thêm route
+   `/api/v1/carts/**,/api/v1/checkout,/api/v1/orders/**` → `lb://commerce-service`. Verify
+   sống qua `:8080` (login + GET carts/me + POST checkout đều route đúng).
 2. ⬜ Admin User CRUD + Role management ở user-service.
 3. ⬜ Logout + Forget Password.
 4. ⬜ Phần lớn hơn, chưa chốt phạm vi chi tiết: refund thật, invoice, notification gửi email/
