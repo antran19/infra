@@ -150,9 +150,20 @@ chính mình), cart không re-validate giá/tồn kho lúc checkout, chưa có c
 `user-events`... — **cần thêm nghe `commerce-events` nếu chưa có, chưa verify**), xem lịch sử
 thông báo của mình, Admin xem toàn bộ (audit).
 
-❌ **Không gửi email/push thật** — chỉ lưu DB, không có channel gửi đi nào. Không có preference
-người dùng. Không có retry/delivery-status. Không có health-check cho message broker (SRS yêu
-cầu). Không có springdoc/Swagger (các service khác đều có).
+✅ (2026-10-09) **Gửi email thật (SMTP)** — mỗi notification resolve được (UserRegistered/
+BidPlaced/Outbid/AuctionWon/AuctionSettled/PasswordResetRequested) giờ cũng được gửi email
+qua `SmtpEmailSenderAdapter` (`JavaMailSender`, cấu hình qua `MAIL_HOST/PORT/USERNAME/
+PASSWORD`). Email người nhận lấy từ cache local `known_user_emails` (populate từ
+`UserRegisteredEvent` — service này **không** gọi sync sang user-service để lấy email,
+đúng nguyên tắc polyrepo). **Chưa có tài khoản SMTP thật trên máy này** — khi
+`MAIL_USERNAME` rỗng, adapter chỉ log "would have sent" thay vì thử kết nối; verify sống
+bằng cách đọc log này (xem commit `2ef9fd7`). Khi có SMTP credentials thật, chỉ cần set
+3 biến môi trường, không cần sửa code.
+
+❌ **Vẫn thiếu**: push notification thật (chỉ email). Không có preference người dùng.
+Không có retry/delivery-status khi gửi email thất bại (log lỗi rồi bỏ qua, fail-soft).
+Không có health-check cho message broker (SRS yêu cầu). Không có springdoc/Swagger (các
+service khác đều có).
 
 ### Fulfillment Service
 ❌ **0% — không có 1 dòng code, không có repo.** SRS mục 3.6 (Inventory/Warehouse + Shipping)
@@ -184,8 +195,14 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
    pushed GitHub + synced GitLab monorepo. Chi tiết xem mục 4 (user-service).
 3. ✅ (2026-10-09) Logout + Forget/Reset Password ở user-service — commit `f9a8fc3` +
    common-libs 1.5.0 (`efbc581`), pushed GitHub + synced GitLab monorepo. Chi tiết xem mục 4.
-4. ⬜ Phần lớn hơn, chưa chốt phạm vi chi tiết: refund thật, invoice, notification gửi email/
-   push thật, Fulfillment — làm tới đâu tính tới đó, KHÔNG tự ý làm hết 1 lượt vì quy mô lớn.
+4. Phần lớn hơn, làm tới đâu tính tới đó (KHÔNG tự ý làm hết 1 lượt):
+   - ✅ (2026-10-09) Notification gửi email thật (SMTP) — xem mục 4 (notification-service),
+     commit `2ef9fd7` (notification-service) + `8b6a2f1` (user-service, publish
+     `PasswordResetRequestedEvent`) + common-libs 1.6.0 (`45f3d4a`). Pushed GitHub + synced
+     GitLab.
+   - ⬜ Push notification thật.
+   - ⬜ Refund thật, invoice.
+   - ⬜ Fulfillment Service.
 
 *(Đánh dấu ✅ khi xong, cập nhật ngày + tóm tắt ngắn ở đây thay vì để trạng thái cũ.)*
 
