@@ -99,9 +99,21 @@ cũ (`USER.CHANGE_PASSWORD`), Role `create/update/delete/list/view` (`ROLE.CREAT
 login/view/list). Migration `V11`. 98 test, verify sống đầy đủ qua Docker (xem commit
 `94a6cc9`).
 
-❌ **Thiếu**: Logout, Forget password. Admin điều chỉnh thủ công điểm uy tín
-(`USER.REPUTATION.ADJUST`) — hiện chỉ tự động trừ điểm, không ai chỉnh tay được.
-Dispute handling (SRS có nhắc) — chưa có gì.
+✅ (2026-10-09) **Logout + Forget/Reset Password** — Logout blacklist `jti` của token hiện
+tại (bảng `blacklisted_tokens`), enforce qua `TokenBlacklistPort` mới trong common-libs
+1.5.0 (`JwtAuthenticationFilter` check optional bean này; service nào không wire bean thì
+fail-open — **chỉ user-service enforce được, token logout vẫn còn hiệu lực ở
+catalog/auction/commerce-service tới khi tự hết hạn (60 phút)** — hạn chế đã biết, không
+làm blacklist phân tán qua Kafka vì quá tốn cho scope hiện tại). Forget password: token
+one-time 30 phút, hash SHA-256 (không bcrypt vì token đã đủ entropy, cần lookup theo hash
+trực tiếp), trả `rawToken` thẳng trong response tạm thời (**chưa có email thật** — xem mục
+4). Reset password validate token chưa dùng/chưa hết hạn trước khi đổi mật khẩu. Migration
+`V12`. Verify sống đầy đủ qua Docker (login→gọi API→logout→gọi lại bị 401; forgot→reset→
+login mật khẩu mới OK/mật khẩu cũ fail/token dùng lại bị 401). Commit `f9a8fc3`
+(user-service) + `efbc581` (common-libs).
+
+❌ **Thiếu**: Admin điều chỉnh thủ công điểm uy tín (`USER.REPUTATION.ADJUST`) — hiện chỉ tự
+động trừ điểm, không ai chỉnh tay được. Dispute handling (SRS có nhắc) — chưa có gì.
 
 ### catalog-service (port 8082)
 ✅ Product CRUD + đổi trạng thái (DRAFT/ACTIVE/INACTIVE) + search (Postgres full-text search,
@@ -170,7 +182,8 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
    sống qua `:8080` (login + GET carts/me + POST checkout đều route đúng).
 2. ✅ (2026-10-09) Admin User CRUD + Role management ở user-service — commit `94a6cc9`,
    pushed GitHub + synced GitLab monorepo. Chi tiết xem mục 4 (user-service).
-3. ⬜ Logout + Forget Password.
+3. ✅ (2026-10-09) Logout + Forget/Reset Password ở user-service — commit `f9a8fc3` +
+   common-libs 1.5.0 (`efbc581`), pushed GitHub + synced GitLab monorepo. Chi tiết xem mục 4.
 4. ⬜ Phần lớn hơn, chưa chốt phạm vi chi tiết: refund thật, invoice, notification gửi email/
    push thật, Fulfillment — làm tới đâu tính tới đó, KHÔNG tự ý làm hết 1 lượt vì quy mô lớn.
 
