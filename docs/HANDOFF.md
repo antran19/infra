@@ -1,198 +1,178 @@
 # Project Nexus — Handoff / Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-09-25, trước khi chuyển máy làm việc từ Windows sang MacBook.
-File này tồn tại vì bộ nhớ hội thoại (memory) của Claude Code gắn theo từng máy — đổi máy
-là mất ngữ cảnh, nên toàn bộ trạng thái quan trọng được chép lại đây, trong git, để một
-conversation mới (trên máy khác) đọc file này là nắm được đang làm tới đâu.
+**Cập nhật lần cuối:** 2026-10-09. File này tồn tại để 1 session Claude Code mới đọc xong là
+nắm được toàn bộ trạng thái dự án **mà không cần đọc lại từng file code** — tốn ít token hơn
+nhiều so với tự khám phá lại từ đầu. Khi có thay đổi lớn (thêm service, đổi kiến trúc, fix bug
+quan trọng), **cập nhật file này** thay vì để nó lỗi thời như lần trước (bản cũ dừng ở lúc
+auction-service còn chưa viết dòng code nào, trong khi thực tế đã xong rất nhiều).
 
-## 1. Bối cảnh chung
+## 1. Bối cảnh
 
-Project Nexus là đồ án tốt nghiệp/capstone môn học tại FPT, domain: **e-commerce có chức
-năng đấu giá**. SRS gốc: "Project Nexus SRS v1.0" (04/06/2026, tác giả HauNK).
+Capstone/đồ án FPT, domain **e-commerce có chức năng đấu giá**. SRS gốc:
+`C:\FPT\srs-nexus-ecommerce-auction-v1.docx` (đã trích text ra, xem cách làm ở mục 7 nếu cần
+đọc lại — máy này không có `pandoc`/`soffice`, phải dùng cách unzip + strip XML thủ công).
 
-Nhóm 4 người: Trần Nguyễn Minh An (leader, chính là user của conversation này,
-trannguyenminhan2005@gmail.com), Trịnh Hoàng Mai Anh, Vũ Thị Tú Anh, Phan Anh Khoa.
+Nhóm 4 người, leader là user của conversation này (Trần Nguyễn Minh An).
 
-**Có 2 codebase tách biệt, đừng nhầm:**
-- **Solo repo** (`antran19/project-nexus`, Maven monorepo) — dự án cá nhân của leader, làm
-  trước cả nhóm để học kiến trúc. **Hiện đang tạm gác lại**, không phải hướng đi hiện tại.
-- **Polyrepo** (6 repo GitHub riêng biệt dưới `antran19`) — **đây là hướng đang làm**, theo
-  yêu cầu của thầy: mỗi microservice phải là 1 repo + 1 project Spring Boot độc lập, không
-  dùng monorepo chung cho bài nộp của nhóm.
+**2 nơi lưu code song song, phải đồng bộ thủ công:**
+- **GitHub polyrepo** (`antran19/<service>`) — nơi code thật sự được viết trong mọi session.
+- **GitLab monorepo** (`gitlab-group2-nexus`, remote
+  `git.fsoft-academy.edu.vn/hcm26_cpl_java_11/hcm26_cpl_java_11_group_2`) — nơi nộp bài, mỗi
+  service nằm trong 1 thư mục con. **Không tự động sync** — sau mỗi đợt thay đổi đáng kể,
+  phải tự kéo code từ GitHub vào đây bằng `git subtree pull --prefix=<service> <github-url>
+  main --squash` (dùng `subtree add` nếu service đó chưa từng có trong monorepo). Lưu ý
+  GitLab qua Cloudflare hay lỗi `HTTP/2 PROTOCOL_ERROR` khi push file lớn — đã fix cố định
+  bằng `git config http.version HTTP/1.1` + `http.postBuffer 524288000` (repo-local config,
+  đã set sẵn trong `gitlab-group2-nexus`, không cần set lại).
 
-## 2. Polyrepo — 6 repo hiện có
-
-Clone tất cả làm sibling trong cùng 1 thư mục cha (xem `infra/README.md`):
+## 2. Các repo (clone làm sibling trong `C:\FPT`)
 
 ```
-<parent>/
-  common-libs/
-  discovery-server/
-  api-gateway/
-  user-service/
-  catalog-service/
-  infra/
+C:\FPT\
+  common-libs/        # 4 module dùng chung, version hiện tại 1.4.0
+  discovery-server/    # Eureka, port 8761
+  api-gateway/          # Spring Cloud Gateway (WebFlux), port 8080
+  user-service/         # port 8081, DB user_db (postgres port 5432)
+  catalog-service/      # port 8082, DB catalog_db (5433)
+  auction-service/      # port 8083, DB auction_db (5434)
+  notification-service/ # port 8084, DB notification_db (5435)
+  commerce-service/     # port 8085, DB commerce_db (5436)
+  infra/                 # docker-compose cho cả cụm + file này
+  nexus-frontend/        # React+Vite+Tailwind, FE của leader. API.md ở root = tài liệu API
+                          # đầy đủ cho FE, LUÔN cập nhật file đó song song khi đổi API.
+  gitlab-group2-nexus/   # bản sync sang GitLab, xem mục 1
 ```
 
-Tất cả đều public trên GitHub, dưới account `antran19`. Tính đến 2026-09-25, cả 6 repo đều
-sạch (`main` == `origin/main`, không có thay đổi chưa commit).
+Có 1 repo **solo** không liên quan (`antran19/project-nexus`) — bỏ qua, không phải hướng đang
+làm.
 
-## 3. Đã implement xong (verify trực tiếp từ code, không chỉ suy đoán)
+## 3. Kiến trúc & convention (áp dụng cho MỌI service, đọc kỹ trước khi thêm code mới)
 
-**User Service** — `POST /api/v1/users/register`, `POST /api/v1/auth/login` (JWT),
-`PUT /api/v1/users/me/password`. Role/privilege-based authorization.
+- **Hexagonal**: `api/` (controller, DTO, MapStruct mapper) → `application/usecase/` (class
+  thường, không Spring annotation, constructor injection) + `application/port/out/` (interface)
+  → `domain/model/` (immutable, private constructor + factory `create`/`reconstitute`, method
+  `withX()` trả instance mới) + `domain/service/` (business rule thuần, không framework) →
+  `infrastructure/persistence|messaging|config|payment` (implement port).
+- **Use case wiring**: tất cả qua `infrastructure/config/UseCaseConfig.java`, `@Bean` method
+  thủ công, không `@Service`/`@Component` trên use case.
+- **`common-libs`** (4 module, publish qua GitHub Packages khi push lên `main`):
+  `common-core` (`ApiResponse<T>`, exception hierarchy: `NotFoundException`/
+  `ConflictException`/`ForbiddenException`/`ValidationException`/`UnauthorizedException`,
+  mỗi cái constructor `(errorCode, message)`), `common-web` (`GlobalExceptionHandler`),
+  `common-security` (`@RequiresPrivilege`, `JwtTokenProvider`, `JwtAuthenticationFilter`,
+  `TokenDetails` — xem mục 5), `common-events` (`DomainEvent` base + mọi event class). **Sửa
+  gì trong common-libs phải bump version + `mvn clean install -DskipTests` để các service
+  khác build local được, rồi push để CI publish lên GitHub Packages.**
+- **Outbox pattern**: mọi service publish event qua bảng `outbox` (ghi cùng transaction với
+  nghiệp vụ) + `OutboxRelayJob` (`@Scheduled(fixedDelay=5000)`) đẩy lên Kafka topic
+  `<service>-events`. Service nào cần nghe thì thêm `@KafkaListener(topics="...")`, parse
+  `eventType` bằng Jackson, bỏ qua event không quan tâm.
+- **Response envelope**: `{success, data, error}`, `error.fieldErrors` cho lỗi validate field.
+- **Privilege**: `@RequiresPrivilege("X.Y")` ở method controller, check qua JWT claim
+  `privileges`. Mọi endpoint ghi dữ liệu cần JWT hợp lệ (`anyRequest().authenticated()`); GET
+  public trừ khi đụng dữ liệu riêng tư (cart/order/reputation chi tiết) thì vẫn cần
+  `@RequiresPrivilege`.
+- **Cross-service ID**: luôn là UUID string "mù" (opaque) — **không có service nào gọi đồng bộ
+  sang service khác qua REST**. Mọi phối hợp giữa service đều qua Kafka event.
+- **TDD bắt buộc**: viết test trước, chạy thấy RED, code tới khi GREEN, rồi mới sang việc tiếp.
+  Unit test cho domain/use case dùng Mockito, không cần Spring. Integration test cho
+  repository adapter/outbox dùng **Testcontainers thật** (Postgres/Kafka), không mock DB.
+- **⚠️ Bug môi trường đã gặp**: `mvn clean` trên máy Windows này **đôi khi không xoá sạch
+  `target/`** (nghi file bị khoá bởi tiến trình nền/IDE), để lại `.class` cũ không khớp source
+  mới (ví dụ MapStruct impl thiếu `implements`) → lỗi khó hiểu kiểu "No qualifying bean". Nếu
+  gặp lỗi Spring context load thất bại mà code nhìn đúng, **xoá tay `rm -rf target` rồi build
+  lại** trước khi nghi ngờ gì khác.
 
-**Catalog Service** — Category CRUD đầy đủ; Product CRUD + `PATCH /{id}/status` +
-`GET /discover` + `GET /{id}` + search (Postgres full-text search); SKU, product image;
-domain event publish qua Outbox pattern → Kafka topic `catalog-events`
-(`ProductCreated`, `ProductUpdated`, `ProductStatusChanged`, `CategoryCreated`,
-`CategoryUpdated`).
+## 4. Trạng thái từng service (audit thật từ code ngày 2026-10-09, không suy đoán)
 
-**Hạ tầng** — `discovery-server` (Eureka), `api-gateway` (JWT signature/expiry check +
-method-aware routing: GET public, còn lại cần auth), `common-libs` (4 module:
-`common-core`, `common-web`, `common-events`, `common-security`, publish qua GitHub
-Packages, version hiện tại `1.0.0`), `infra` (docker-compose chạy cả cụm, đã verify
-end-to-end: Eureka registration, register/login/category/product/search qua gateway).
+### user-service (port 8081)
+✅ Đăng ký, Login (JWT), đổi mật khẩu tự thân, luồng nâng cấp BUYER→SELLER (request + admin
+duyệt/từ chối), **Reputation module đầy đủ**: rating sau giao dịch, điểm uy tín + trust level
+(LOW<40/NORMAL 40-49/TRUSTED≥50), tự động trừ điểm khi bùng kèo đấu giá (nghe
+`AuctionPaymentTimeout` qua Kafka), `trustLevel` nhúng vào JWT lúc login.
 
-## 4. Chưa implement gì cả (chưa có repo, chưa có 1 dòng code)
+❌ **Thiếu hoàn toàn** dù SRS yêu cầu và privilege đã seed sẵn: Admin CRUD user (create/update
+/delete/list/view người dùng khác), Role management (tạo/sửa/xoá/liệt kê role — chỉ seed được
+qua Flyway, không có API), Logout, Forget password. Admin điều chỉnh thủ công điểm uy tín
+(`USER.REPUTATION.ADJUST`) cũng chưa có — hiện chỉ tự động trừ điểm, không ai chỉnh tay được.
+Dispute handling (SRS có nhắc) — chưa có gì.
 
-- **Notification Service**
-- **Commerce Service**
-- **Auction Service** — chức năng lõi "đấu giá" của domain, **đang thiết kế dở** (xem mục 5)
-- **Fulfillment Service**
+### catalog-service (port 8082)
+✅ Product CRUD + đổi trạng thái (DRAFT/ACTIVE/INACTIVE) + search (Postgres full-text search,
+filter q/categoryId/status/sellerId) + discover (trang chủ). Category CRUD đầy đủ.
 
-## 5. ĐANG LÀM: Thiết kế Auction Service — CHƯA XONG, đang chờ quyết định
+⚠️ `GET /discover` chỉ lọc `status=ACTIVE`, chưa có logic "phổ biến"/"sắp hết giờ đấu giá" như
+SRS mô tả.
 
-Đang theo quy trình `superpowers:brainstorming` (path **architectural** — vì đây là service
-mới hoàn toàn, ảnh hưởng cách các service khác tương tác): tìm hiểu bối cảnh → hỏi làm rõ →
-đề xuất phương án → thiết kế theo section → viết spec file → rồi mới chuyển sang
-`writing-plans` để lên kế hoạch implement. **Chưa viết code nào cho Auction Service cả.**
+### auction-service (port 8083)
+✅ Đầy đủ nhất trong toàn hệ thống: tạo/sửa/huỷ đấu giá, lifecycle tự động
+(`AuctionLifecycleJob`, PENDING→ACTIVE→ENDED), đặt giá với lock chống race condition
+(`SELECT...FOR UPDATE`), anti-sniping (tự gia hạn), xác định người thắng, payment deadline
+(`PaymentDeadlineJob`, 24h, tự phát `AuctionPaymentTimeout` nếu quá hạn — **đã fix bug: không
+còn phạt nhầm auction đã thanh toán**), **enforce `trustLevel` thật** (LOW không đặt giá được,
+dưới TRUSTED không tạo đấu giá được được — đọc trực tiếp từ JWT, không gọi user-service).
+Payment đã chuyển hẳn sang commerce-service xử lý (auction-service chỉ phát event, không tự
+tạo order/gọi Stripe nữa).
 
-### 5.1. Requirement đã trích xuất từ SRS §3.5 (Auction Services)
+❌ Chưa có: auction riêng tư (visibility public/restricted), check tường minh
+`MAX_ACTIVE_AUCTIONS_PER_SELLER` trong use case (có field nhưng chưa thấy enforce — **cần xác
+minh lại**, audit trước có thể sai chỗ này).
 
-**Auction Management:**
-- Create Auction (seller): cần `productId`, `sellerId`, `startingPrice`, `bidIncrement`,
-  `startTime`, `endTime`. Validate seller eligibility, product validity, không có auction
-  active nào khác cho cùng product.
-- Configure Auction: chỉ sửa được **trước khi** auction bắt đầu.
-- Lifecycle tự động: `PENDING → ACTIVE` (tới giờ start) `→ ENDED` (tới giờ end). Không cho
-  chuyển trạng thái sai quy tắc.
-- Cancel Auction: seller cancel (có điều kiện eligibility) + Admin force cancel
-  (`AUCTION.ADMIN_CANCEL`). Cancel xong thì chặn mọi bid tiếp theo. Có audit log.
-- Visibility: public/restricted (chưa rõ chi tiết, có thể đơn giản hóa MVP = luôn public).
+### commerce-service (port 8085)
+✅ Giỏ hàng CRUD, checkout (giỏ→order), tạo order tự động từ `AuctionWonEvent` (Kafka), thanh
+toán Stripe thật (checkout session + confirm, idempotent), huỷ order (chỉ khi chưa thanh toán).
 
-**Bidding:**
-- Place Bid: auction phải đang active, bid amount phải ≥ giá cao nhất hiện tại +
-  `bidIncrement`, xử lý atomic.
-- Concurrency: nhiều người bid cùng lúc — phải đảm bảo bid cao nhất hợp lệ luôn được ghi
-  nhận đúng, không bị mất do race condition. **Chưa chốt cơ chế** (pessimistic lock vs
-  optimistic lock) — đây là 1 "approach" cần quyết định ở bước tiếp theo.
-- Bid history: lưu bidder, amount, thời điểm.
-- Outbid detection: khi có người trả giá cao hơn, phát event `Outbid` cho người vừa bị vượt.
-- Anti-sniping: nếu có bid đặt gần sát giờ kết thúc thì tự động gia hạn thêm
-  `ANTI_SNIPING_EXTENSION_MINUTES` (mặc định 5 phút). SRS không cho số giới hạn tổng số lần
-  gia hạn — **cần tự đề xuất 1 con số hợp lý và note rõ đây là quyết định tự thêm, không có
-  trong SRS**.
+⚠️/❌ **Không có refund thật** (huỷ order đã thanh toán chỉ là out-of-scope có chủ đích, chưa
+code), **không có invoice/receipt**, **không có Admin xem tất cả order** (chỉ xem order của
+chính mình), cart không re-validate giá/tồn kho lúc checkout, chưa có cart-expiration job.
+**🔴 BUG: `api-gateway` chưa có route cho commerce-service** — gọi qua gateway (`:8080`) sẽ
+không tới được, phải gọi thẳng `:8085`. Cần sửa `api-gateway/src/main/resources/application.yml`.
 
-**Settlement:**
-- Khi auction kết thúc: khóa auction, không nhận bid nữa.
-- Xác định người thắng = bid hợp lệ cao nhất. Không có bid nào → auction thất bại
-  (`AuctionFailed`).
-- Phát event `AuctionWon` (thành công) hoặc `AuctionFailed` (không ai bid).
-- Gửi settlement info (product, giá cuối, buyer, seller) — **Auction Service KHÔNG tự tạo
-  order**, chỉ gửi đi cho Commerce Service xử lý tiếp.
-- Payment deadline: người thắng có `AUCTION_PAYMENT_DEADLINE_HOURS` (mặc định 24h) để thanh
-  toán. Không thanh toán kịp → phát event `AuctionPaymentTimeout` + phạt điểm uy tín.
-- Idempotent bắt buộc cho: place bid, auction ending, settlement.
+### notification-service (port 8084)
+✅ Tự động ghi log mọi event nghe được từ Kafka (`auction-events`/`catalog-events`/
+`user-events`... — **cần thêm nghe `commerce-events` nếu chưa có, chưa verify**), xem lịch sử
+thông báo của mình, Admin xem toàn bộ (audit).
 
-**Events cần phát (Kafka, theo Outbox pattern giống Catalog/User):** `AuctionCreated`,
-`AuctionScheduled`, `AuctionStarted`, `BidPlaced`, `Outbid`, `AuctionCancelled`,
-`AuctionEnded`, `AuctionWon`, `AuctionFailed`, `AuctionPaymentTimeout`, `AuctionSettled`.
+❌ **Không gửi email/push thật** — chỉ lưu DB, không có channel gửi đi nào. Không có preference
+người dùng. Không có retry/delivery-status. Không có health-check cho message broker (SRS yêu
+cầu). Không có springdoc/Swagger (các service khác đều có).
 
-**Privileges cần thêm vào `common-security`:** `AUCTION.CREATE`, `AUCTION.UPDATE`,
-`AUCTION.CANCEL`, `AUCTION.ADMIN_CANCEL`, `AUCTION.VIEW`, `AUCTION.LIST`, `AUCTION.BID`,
-`AUCTION.VIEW_BID_HISTORY`.
+### Fulfillment Service
+❌ **0% — không có 1 dòng code, không có repo.** SRS mục 3.6 (Inventory/Warehouse + Shipping)
+hoàn toàn chưa động tới.
 
-**Config constants liên quan (từ SRS):**
-| Constant | Giá trị mặc định |
-|---|---|
-| `AUCTION_MIN_DURATION_MINUTES` | 60 |
-| `AUCTION_MAX_DURATION_HOURS` | 168 |
-| `DEFAULT_BID_INCREMENT` | 10 |
-| `MAX_ACTIVE_AUCTIONS_PER_SELLER` | 5 |
-| `ANTI_SNIPING_ENABLED` | true |
-| `ANTI_SNIPING_EXTENSION_MINUTES` | 5 |
-| `AUCTION_PAYMENT_DEADLINE_HOURS` | 24 |
-| `MIN_REPUTATION_TO_BID` | (có nhưng chưa có hệ thống reputation nào để check) |
-| `MIN_REPUTATION_TO_CREATE_AUCTION` | (tương tự) |
+### Hạ tầng
+`discovery-server`/`api-gateway`/`common-libs`/`infra` (docker-compose) hoạt động tốt, đã
+verify end-to-end nhiều lần qua Docker thật (kể cả thanh toán Stripe thật qua trình duyệt).
+API versioning `/api/v1` nhất quán. Swagger có ở user/catalog/auction/commerce-service, thiếu
+ở notification-service.
 
-**Yêu cầu phi chức năng đáng chú ý:** bid placement là critical path, tối ưu độ trễ thấp;
-throughput mục tiêu ≥ 3,000 bids/phút; service phải stateless (trừ cache/optimization tạm
-thời); không được mất bid hợp lệ nào kể cả khi service restart; audit log cho kết quả
-auction, không được sửa.
+## 5. Cơ chế JWT (quan trọng nếu đụng tới auth)
 
-### 5.2. Vấn đề đã phát hiện: 3 điểm SRS yêu cầu nhưng phụ thuộc service chưa tồn tại
+JWT claim gồm: `sub` (userId), `role`, `privileges` (list), `trustLevel` (LOW/NORMAL/TRUSTED,
+tính từ điểm uy tín **tại thời điểm login** — đổi điểm sau đó không có hiệu lực tới khi login
+lại/token hết hạn, 60 phút). `JwtAuthenticationFilter` (common-security) set
+`Authentication.getPrincipal()` = userId, authorities = privileges, và
+`Authentication.getDetails()` = `TokenDetails(role, trustLevel)` — service nào cần đọc
+`trustLevel` (hiện chỉ auction-service) thì cast `getDetails()` sang `TokenDetails`. Thiếu
+claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseCase`/
+`CreateAuctionUseCase`.
 
-1. **Reputation check** (`MIN_REPUTATION_TO_BID`, `MIN_REPUTATION_TO_CREATE_AUCTION`) —
-   chưa có hệ thống điểm uy tín nào được xây ở đâu cả (User Service mới chỉ có
-   register/login/đổi mật khẩu).
-2. **Gửi settlement cho Commerce để tạo order** — Commerce Service chưa tồn tại.
-3. **Payment deadline enforcement** — việc xác nhận "đã thanh toán" là của Commerce, Auction
-   Service không có cách nào biết được.
+## 6. Việc đang làm / tiếp theo (thứ tự ưu tiên đã thống nhất với user, 2026-10-09)
 
-### 5.3. Đề xuất đã đưa ra cho user (ĐANG CHỜ USER XÁC NHẬN — chưa được đồng ý)
+1. ⬜ Sửa route `api-gateway` cho commerce-service (bug, không phải thiếu tính năng).
+2. ⬜ Admin User CRUD + Role management ở user-service.
+3. ⬜ Logout + Forget Password.
+4. ⬜ Phần lớn hơn, chưa chốt phạm vi chi tiết: refund thật, invoice, notification gửi email/
+   push thật, Fulfillment — làm tới đâu tính tới đó, KHÔNG tự ý làm hết 1 lượt vì quy mô lớn.
 
-Build **đầy đủ 100% phần lõi Auction tự làm được** (lifecycle, bidding, concurrency,
-anti-sniping, xác định người thắng, tự đóng phiên đúng giờ). Với 3 điểm phụ thuộc ở trên:
-Auction Service **chỉ phát Kafka event** (`AuctionWon`, `AuctionPaymentTimeout`...), không tự
-xử lý thay các service chưa tồn tại. Đây chính là pattern đã dùng khi build Catalog Service
-lúc Commerce chưa có (check "product có order không" tạm thời trả về `true`/no-op, có ghi
-chú rõ trong code).
+*(Đánh dấu ✅ khi xong, cập nhật ngày + tóm tắt ngắn ở đây thay vì để trạng thái cũ.)*
 
-**Trạng thái: user nói "chưa hiểu, giải thích lại" → đã giải thích lại bằng ví dụ đơn giản
-hơn (ẩn dụ "hô lên rồi ai nghe thì xử lý"). Sau đó user chuyển sang yêu cầu viết file
-handoff này, nên vẫn CHƯA CÓ câu trả lời cuối cùng cho đề xuất ở trên.**
+## 7. Đọc lại SRS gốc nếu cần
 
-## 6. Bước tiếp theo khi resume (trên MacBook)
-
-1. **Trước tiên, hỏi lại user có đồng ý với đề xuất ở mục 5.3 không** (chưa được confirm).
-2. Nếu đồng ý → chuyển sang bước "Propose 2-3 approaches" của brainstorming skill: quyết
-   định cơ chế concurrency cho bidding (pessimistic row lock vs optimistic lock + retry —
-   gợi ý nghiêng về pessimistic vì đơn giản và an toàn hơn ở mức 1 auction bị nhiều người
-   tranh giành cùng lúc) và cơ chế lifecycle scheduling (poll định kỳ kiểu `@Scheduled`,
-   giống `OutboxRelayJob` đã dùng ở Catalog/User).
-3. Viết design spec đầy đủ theo đúng khuôn mẫu đã dùng cho Catalog Service (xem file tham
-   khảo bên dưới), lưu tại `docs/superpowers/specs/YYYY-MM-DD-auction-service-design.md`
-   trong 1 repo phù hợp (repo `infra` này, hoặc trong chính repo `auction-service` mới sau
-   khi tạo — cần quyết định).
-4. Tạo repo GitHub mới `antran19/auction-service`, bootstrap Spring Boot project theo đúng
-   khuôn mẫu polyrepo hiện có (Eureka client, phụ thuộc `common-libs`, CI, Dockerfile) —
-   giống hệt cách `catalog-service` đã được dựng.
-5. Invoke skill `writing-plans` để ra implementation plan, rồi mới code.
-
-**File tham khảo phong cách/chi tiết đã dùng cho Catalog Service** (để giữ nhất quán style
-khi viết spec cho Auction Service) — nằm trong solo repo, KHÔNG có trên Mac trừ khi clone
-solo repo về:
-`project-nexus/docs/superpowers/specs/2026-09-24-catalog-service-design.md` (nhánh
-`worktree-platform-foundation-user-service`).
-
-## 7. QUAN TRỌNG — file cần copy thủ công sang Mac (không nằm trong git)
-
-- **SRS gốc:** `D:\Downloads\srs-nexus-ecommerce-auction-v1.docx` — **bắt buộc phải copy**,
-  đây là nguồn duy nhất chứa yêu cầu chi tiết cho Notification/Commerce/Fulfillment (mục 5.1
-  ở trên mới chỉ trích Auction). Không có file này trên Mac thì không đọc được SRS gốc.
-- Excel plan của nhóm: `C:\Users\Lenovo\Downloads\Nexus-Team2-Plan-3Months.xlsx` (và file
-  tham khảo gốc `Nexus-Backlog-Plan.xlsx` cùng thư mục) — cần nếu muốn xem/sửa kế hoạch
-  sprint/capacity.
-
-## 8. Ghi chú môi trường & cách làm việc
-
-- Trên máy Windows này từng gặp hiện tượng file bị chỉnh sửa/nhân bản ngoài ý muốn (nghi do
-  IDE background service) — chưa rõ có xảy ra trên Mac không, nhưng nên cẩn trọng, luôn đọc
-  kỹ diff/nội dung trước khi tin `git status`.
-- Sở thích làm việc của user: một khi đã đang thực thi/xác nhận thì hỏi ít, hỏi 1 câu rõ
-  ràng thay vì hỏi dồn nhiều lựa chọn; nếu yêu cầu mơ hồ về việc đang nhắm vào artifact/thread
-  nào thì hỏi thẳng thay vì đoán; giữ doc/spec ngắn gọn, đúng trọng tâm.
-- Repo solo (`project-nexus`) có PR #1 đang mở, và 35 commit của Catalog Service đã làm xong
-  nhưng chưa push lên remote — việc merge/PR/giữ nguyên **vẫn chưa được quyết định**, không
-  liên quan gì đến polyrepo đang làm, có thể bỏ qua cho tới khi quay lại solo repo.
+File `.docx` không đọc trực tiếp được (máy này thiếu `pandoc`/`soffice`). Cách đã dùng:
+`unzip -oq "C:\FPT\srs-nexus-ecommerce-auction-v1.docx" -d <scratchpad>/srs_unpacked/`, rồi
+chạy script Python strip tag XML trên `word/document.xml` → text thuần (~59000 ký tự). Toàn bộ
+nội dung SRS (mục 2.7 bảng privilege, mục 3.1-3.6 requirement chi tiết, mục 5 NFR) đã được đọc
+và đối chiếu với code thật ít nhất 1 lần (2026-10-09) — xem mục 4 ở trên là kết quả, không cần
+đọc lại SRS từ đầu trừ khi cần tra câu chữ chính xác.
