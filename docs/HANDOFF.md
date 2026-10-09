@@ -116,11 +116,24 @@ login mật khẩu mới OK/mật khẩu cũ fail/token dùng lại bị 401). C
 động trừ điểm, không ai chỉnh tay được. Dispute handling (SRS có nhắc) — chưa có gì.
 
 ### catalog-service (port 8082)
-✅ Product CRUD + đổi trạng thái (DRAFT/ACTIVE/INACTIVE) + search (Postgres full-text search,
-filter q/categoryId/status/sellerId) + discover (trang chủ). Category CRUD đầy đủ.
+✅ Product CRUD + đổi trạng thái (DRAFT/ACTIVE/INACTIVE/**SOLD** mới thêm) + search (Postgres
+full-text search, filter q/categoryId/status/sellerId) + discover (trang chủ). Category CRUD
+đầy đủ.
+
+✅ (2026-10-09) **Product tự chuyển SOLD khi đấu giá kết thúc có người thắng** —
+catalog-service trước đây **0 Kafka consumer** (chỉ có producer/outbox), giờ thêm
+`AuctionEventsListener` nghe `auction-events`, nhận `AuctionWon` → `MarkProductSoldUseCase`
+(system-triggered, không qua ownership check như `ChangeProductStatusUseCase`, idempotent
+no-op nếu đã SOLD). Verify sống đầy đủ: tạo product→auction→bid→ép hết giờ→xác nhận
+product chuyển ACTIVE→SOLD, biến mất khỏi `/search?status=ACTIVE`. Bump common-libs
+1.0.0→1.6.0 (cho `AuctionWonEvent`). Commit `93ce675`.
 
 ⚠️ `GET /discover` chỉ lọc `status=ACTIVE`, chưa có logic "phổ biến"/"sắp hết giờ đấu giá" như
 SRS mô tả.
+
+⚠️ **Chưa xử lý case bid-and-run**: nếu người thắng không thanh toán (24h timeout), product
+vẫn đứng yên ở SOLD vĩnh viễn — không có relist/revert vì chưa làm cơ chế "second-chance"
+(xem mục 6, gap #2 của audit "luồng mua hàng đấu giá").
 
 ### auction-service (port 8083)
 ✅ Đầy đủ nhất trong toàn hệ thống: tạo/sửa/huỷ đấu giá, lifecycle tự động
@@ -200,6 +213,17 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      commit `2ef9fd7` (notification-service) + `8b6a2f1` (user-service, publish
      `PasswordResetRequestedEvent`) + common-libs 1.6.0 (`45f3d4a`). Pushed GitHub + synced
      GitLab.
+   - ✅ (2026-10-09) Audit riêng "luồng mua hàng đấu giá đã ổn chưa" (user yêu cầu) — xác
+     nhận happy path (Bid→AuctionWon→order→Stripe→OrderPaid→MarkAuctionPaid) đúng, có
+     idempotency tốt; `MAX_ACTIVE_AUCTIONS_PER_SELLER` thực ra ĐÃ enforce đúng (ghi chú cũ ở
+     mục 4 nói "cần xác minh lại" là sai, đã sửa). Tìm ra 3 gap, đã fix gap #1 (xem
+     catalog-service ở trên). Gap #2 và #3 CHƯA làm, liệt kê bên dưới.
+   - ⬜ Gap #2: không có relist/second-chance khi người thắng bùng kèo (auction kết thúc
+     vĩnh viễn ở ENDED, hàng "mất trắng", chỉ người bùng kèo bị trừ điểm uy tín).
+   - ⬜ Gap #3: buyer tự huỷ order trước hạn thanh toán không đồng bộ ngược về
+     auction-service (`OrderCancelledEvent` không mang `auctionId`, `CommerceEventsListener`
+     bên auction-service chỉ xử lý `OrderPaid`) — auction vẫn treo tới khi tự hết 24h mới
+     phát hiện timeout. Ảnh hưởng độ trễ, không ảnh hưởng tính đúng của dữ liệu.
    - ⬜ Push notification thật.
    - ⬜ Refund thật, invoice.
    - ⬜ Fulfillment Service.
