@@ -91,10 +91,16 @@ duyệt/từ chối), **Reputation module đầy đủ**: rating sau giao dịch
 (LOW<40/NORMAL 40-49/TRUSTED≥50), tự động trừ điểm khi bùng kèo đấu giá (nghe
 `AuctionPaymentTimeout` qua Kafka), `trustLevel` nhúng vào JWT lúc login.
 
-❌ **Thiếu hoàn toàn** dù SRS yêu cầu và privilege đã seed sẵn: Admin CRUD user (create/update
-/delete/list/view người dùng khác), Role management (tạo/sửa/xoá/liệt kê role — chỉ seed được
-qua Flyway, không có API), Logout, Forget password. Admin điều chỉnh thủ công điểm uy tín
-(`USER.REPUTATION.ADJUST`) cũng chưa có — hiện chỉ tự động trừ điểm, không ai chỉnh tay được.
+✅ (2026-10-09) **Admin User CRUD + Role management** — `create/update/delete(soft)/list/view`
+user (`USER.CREATE/UPDATE/DELETE/LIST/VIEW`), admin đổi mật khẩu người khác không cần mật khẩu
+cũ (`USER.CHANGE_PASSWORD`), Role `create/update/delete/list/view` (`ROLE.CREATE/UPDATE/DELETE
+/LIST/VIEW`) kèm gán privilege, xoá role bị chặn nếu còn user tham chiếu (409
+`ROLE_IN_USE`). Soft-delete qua cột `deleted_at` (giữ FK cho rating/order, loại khỏi
+login/view/list). Migration `V11`. 98 test, verify sống đầy đủ qua Docker (xem commit
+`94a6cc9`).
+
+❌ **Thiếu**: Logout, Forget password. Admin điều chỉnh thủ công điểm uy tín
+(`USER.REPUTATION.ADJUST`) — hiện chỉ tự động trừ điểm, không ai chỉnh tay được.
 Dispute handling (SRS có nhắc) — chưa có gì.
 
 ### catalog-service (port 8082)
@@ -162,7 +168,8 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
 1. ✅ (2026-10-09) Sửa route `api-gateway` cho commerce-service — thêm route
    `/api/v1/carts/**,/api/v1/checkout,/api/v1/orders/**` → `lb://commerce-service`. Verify
    sống qua `:8080` (login + GET carts/me + POST checkout đều route đúng).
-2. ⬜ Admin User CRUD + Role management ở user-service.
+2. ✅ (2026-10-09) Admin User CRUD + Role management ở user-service — commit `94a6cc9`,
+   pushed GitHub + synced GitLab monorepo. Chi tiết xem mục 4 (user-service).
 3. ⬜ Logout + Forget Password.
 4. ⬜ Phần lớn hơn, chưa chốt phạm vi chi tiết: refund thật, invoice, notification gửi email/
    push thật, Fulfillment — làm tới đâu tính tới đó, KHÔNG tự ý làm hết 1 lượt vì quy mô lớn.
