@@ -37,6 +37,7 @@ C:\FPT\
   auction-service/      # port 8083, DB auction_db (5434)
   notification-service/ # port 8084, DB notification_db (5435)
   commerce-service/     # port 8085, DB commerce_db (5436)
+  fulfillment-service/  # port 8086, DB fulfillment_db (5437) -- Inventory core, standalone
   infra/                 # docker-compose cho cả cụm + file này
   nexus-frontend/        # React+Vite+Tailwind, FE của leader. API.md ở root = tài liệu API
                           # đầy đủ cho FE, LUÔN cập nhật file đó song song khi đổi API.
@@ -178,9 +179,28 @@ Không có retry/delivery-status khi gửi email thất bại (log lỗi rồi b
 Không có health-check cho message broker (SRS yêu cầu). Không có springdoc/Swagger (các
 service khác đều có).
 
-### Fulfillment Service
-❌ **0% — không có 1 dòng code, không có repo.** SRS mục 3.6 (Inventory/Warehouse + Shipping)
-hoàn toàn chưa động tới.
+### Fulfillment Service (port 8086, repo mới `fulfillment-service`, DB `fulfillment_db` 5437)
+✅ (2026-10-10) **Inventory core (SRS 3.6.1), 1 warehouse cố định ("MAIN", SRS cho phép ở
+MVP)** — `inventory_records` (sku_id+warehouse_id, total/reserved/unavailable_quantity,
+available derived), `inventory_reservations` (reference_id unique = idempotency key,
+PENDING/COMMITTED/RELEASED, TTL 15 phút), `inventory_ledger` (bất biến, ghi mọi movement
+INTAKE/RESERVE/RELEASE/COMMIT). 4 use case: intake/reserve/commit/release + get, cộng
+`ExpireReservationsJob` tự release reservation quá hạn (tái dùng use case release, không
+rule riêng). **Atomicity**: reserve/release/commit dùng conditional `UPDATE ... WHERE
+available >= quantity` trực tiếp ở DB (`@Modifying` JPQL, không load-mutate-save), intake
+dùng `INSERT ... ON CONFLICT DO UPDATE` native query. 45 test, gồm 1 test concurrency thật
+(20 thread tranh 5 suất qua Testcontainers Postgres thật, không mock) chứng minh không
+oversell. Verify sống đầy đủ qua Docker: intake→reserve→insufficient-stock(409)→idempotent
+retry→commit→reserve lại→release, ledger ghi đủ audit trail. Commit `891fa9e`
+(fulfillment-service) + `565c8c9` (infra, wire docker-compose).
+
+⬜ **Chưa làm, có chủ đích** (phạm vi đã thống nhất với user — chỉ làm Inventory core đứng
+độc lập trước): **chưa nối vào commerce-service/auction-service checkout thật** — cần
+chốt trước: reserve đồng bộ (gọi REST, phá lệ "không service nào gọi sync service khác"
+hiện tại của dự án) hay bất đồng bộ (qua Kafka, chấp nhận tạo-order-rồi-huỷ nếu hết hàng).
+Chưa có Shipping & Logistics (SRS 3.6.2) — để sau. Chưa có privilege gating riêng (hiện
+chỉ yêu cầu authenticated(), chưa phân quyền ai được reserve/commit/release — vì chưa rõ
+caller thật sự là ai khi chưa tích hợp).
 
 ### Hạ tầng
 `discovery-server`/`api-gateway`/`common-libs`/`infra` (docker-compose) hoạt động tốt, đã
@@ -237,7 +257,8 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      thêm rule.
    - ⬜ Push notification thật.
    - ⬜ Refund thật, invoice.
-   - ⬜ Fulfillment Service.
+   - ✅ (2026-10-10) Fulfillment Service — Inventory core đứng độc lập, xem mục 4
+     (Fulfillment Service) để biết chi tiết + phần chưa làm (nối checkout thật).
 
 *(Đánh dấu ✅ khi xong, cập nhật ngày + tóm tắt ngắn ở đây thay vì để trạng thái cũ.)*
 
