@@ -215,8 +215,11 @@ services:
         condition: service_healthy
       discovery-server:
         condition: service_started
+      kafka:
+        condition: service_started
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-fulfillment:5432/fulfillment_db
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     ports:
       - "8086:8086"
