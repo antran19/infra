@@ -113,8 +113,14 @@ trực tiếp), trả `rawToken` thẳng trong response tạm thời (**chưa c�
 login mật khẩu mới OK/mật khẩu cũ fail/token dùng lại bị 401). Commit `f9a8fc3`
 (user-service) + `efbc581` (common-libs).
 
-❌ **Thiếu**: Admin điều chỉnh thủ công điểm uy tín (`USER.REPUTATION.ADJUST`) — hiện chỉ tự
-động trừ điểm, không ai chỉnh tay được. Dispute handling (SRS có nhắc) — chưa có gì.
+✅ (2026-10-10) **Admin điều chỉnh thủ công điểm uy tín** — đúng privilege code SRS định
+nghĩa sẵn (`USER.REPUTATION.ADJUST`, chỉ Admin). `ReputationProfile.adjust(delta)` (delta
+có dấu, khác `applyPenalty` luôn trừ) + bảng audit riêng `reputation_adjustments` (khác
+`reputation_penalties` — penalty luôn là hệ quả tự động cố định, adjustment là override tay
+có lý do + ghi ai làm). Verify sống: +15 điểm đưa user từ NORMAL(40)→TRUSTED(55), non-admin
+bị 403 đúng. Migration V13. Commit `a21b835`.
+
+❌ **Vẫn thiếu**: Dispute handling (SRS có nhắc) — chưa có gì.
 
 ### catalog-service (port 8082)
 ✅ Product CRUD + đổi trạng thái (DRAFT/ACTIVE/INACTIVE/**SOLD** mới thêm) + search (Postgres
@@ -159,10 +165,17 @@ toán Stripe thật (checkout session + confirm, idempotent), huỷ order (chỉ
 block checkout). Đây KHÔNG phải "re-validate giá/tồn kho TRƯỚC khi tạo order" (cart vẫn
 chưa làm) — là validate SAU, async.
 
-⚠️/❌ **Không có refund thật** (huỷ order đã thanh toán chỉ là out-of-scope có chủ đích, chưa
-code), **không có invoice/receipt**, **không có Admin xem tất cả order** (chỉ xem order của
-chính mình), cart vẫn không re-validate giá/tồn kho NGAY lúc thêm vào giỏ/trước khi tạo
-order, chưa có cart-expiration job. (Bug route gateway đã fix 2026-10-09, xem mục 6.)
+✅ (2026-10-10) **Admin/Support Staff xem được tất cả order** — `GET /api/v1/orders`
+(khác `/orders/me`). Cùng privilege `ORDER.LIST` với Buyer/Seller (đúng SRS: privilege này
+cả 4 role đều có), nhưng endpoint check thêm role qua `TokenDetails` — Buyer/Seller giữ
+`ORDER.LIST` vẫn bị 403 ở endpoint này vì với họ privilege đó chỉ có nghĩa "xem đơn của
+mình" qua `/orders/me`. Verify sống: Admin thấy đủ 8 order từ nhiều buyer khác nhau, Buyer
+dùng chung token gọi `/orders` bị `ORDER_LIST_ALL_FORBIDDEN` (403). Commit `9cbab8e`.
+
+⚠️/❌ **Vẫn thiếu**: refund thật (huỷ order đã thanh toán chỉ là out-of-scope có chủ đích,
+chưa code), invoice/receipt, cart vẫn không re-validate giá/tồn kho NGAY lúc thêm vào giỏ/
+trước khi tạo order, chưa có cart-expiration job. (Bug route gateway đã fix 2026-10-09, xem
+mục 6.)
 
 ### notification-service (port 8084)
 ✅ Tự động ghi log mọi event nghe được từ Kafka (`auction-events`/`catalog-events`/
@@ -285,6 +298,10 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
    - ✅ (2026-10-10) Fulfillment Service — Inventory core + đã nối vào checkout thật của
      commerce-service (bất đồng bộ qua Kafka), xem mục 4 (Fulfillment Service) để biết
      chi tiết.
+   - ✅ (2026-10-10) Admin điều chỉnh thủ công điểm uy tín (`USER.REPUTATION.ADJUST`) —
+     xem mục 4 (user-service). Commit `a21b835`.
+   - ✅ (2026-10-10) Admin/Support Staff xem tất cả order — xem mục 4 (commerce-service).
+     Commit `9cbab8e`.
 
 *(Đánh dấu ✅ khi xong, cập nhật ngày + tóm tắt ngắn ở đây thay vì để trạng thái cũ.)*
 
