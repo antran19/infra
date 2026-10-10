@@ -69,6 +69,20 @@ services:
       timeout: 5s
       retries: 10
 
+  postgres-fulfillment:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: fulfillment_db
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus
+    ports:
+      - "5437:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d fulfillment_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   kafka:
     image: apache/kafka:3.7.1
     ports:
@@ -192,3 +206,17 @@ services:
       NEXUS_PAYMENT_STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
     ports:
       - "8085:8085"
+
+  fulfillment-service:
+    build:
+      context: ../fulfillment-service
+    depends_on:
+      postgres-fulfillment:
+        condition: service_healthy
+      discovery-server:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-fulfillment:5432/fulfillment_db
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka
+    ports:
+      - "8086:8086"
