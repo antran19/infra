@@ -154,10 +154,15 @@ minh lại**, audit trước có thể sai chỗ này).
 ✅ Giỏ hàng CRUD, checkout (giỏ→order), tạo order tự động từ `AuctionWonEvent` (Kafka), thanh
 toán Stripe thật (checkout session + confirm, idempotent), huỷ order (chỉ khi chưa thanh toán).
 
+✅ (2026-10-10) **Giữ hàng thật qua fulfillment-service** (xem mục 4, Fulfillment Service)
+— order được tạo trước, hết hàng thì tự huỷ sau vài giây (bất đồng bộ qua Kafka, không
+block checkout). Đây KHÔNG phải "re-validate giá/tồn kho TRƯỚC khi tạo order" (cart vẫn
+chưa làm) — là validate SAU, async.
+
 ⚠️/❌ **Không có refund thật** (huỷ order đã thanh toán chỉ là out-of-scope có chủ đích, chưa
 code), **không có invoice/receipt**, **không có Admin xem tất cả order** (chỉ xem order của
-chính mình), cart không re-validate giá/tồn kho lúc checkout, chưa có cart-expiration job.
-(Bug route gateway đã fix 2026-10-09, xem mục 6.)
+chính mình), cart vẫn không re-validate giá/tồn kho NGAY lúc thêm vào giỏ/trước khi tạo
+order, chưa có cart-expiration job. (Bug route gateway đã fix 2026-10-09, xem mục 6.)
 
 ### notification-service (port 8084)
 ✅ Tự động ghi log mọi event nghe được từ Kafka (`auction-events`/`catalog-events`/
@@ -194,13 +199,33 @@ oversell. Verify sống đầy đủ qua Docker: intake→reserve→insufficient
 retry→commit→reserve lại→release, ledger ghi đủ audit trail. Commit `891fa9e`
 (fulfillment-service) + `565c8c9` (infra, wire docker-compose).
 
-⬜ **Chưa làm, có chủ đích** (phạm vi đã thống nhất với user — chỉ làm Inventory core đứng
-độc lập trước): **chưa nối vào commerce-service/auction-service checkout thật** — cần
-chốt trước: reserve đồng bộ (gọi REST, phá lệ "không service nào gọi sync service khác"
-hiện tại của dự án) hay bất đồng bộ (qua Kafka, chấp nhận tạo-order-rồi-huỷ nếu hết hàng).
-Chưa có Shipping & Logistics (SRS 3.6.2) — để sau. Chưa có privilege gating riêng (hiện
-chỉ yêu cầu authenticated(), chưa phân quyền ai được reserve/commit/release — vì chưa rõ
-caller thật sự là ai khi chưa tích hợp).
+✅ (2026-10-10) **Nối vào checkout thật của commerce-service, theo hướng bất đồng bộ**
+(user chốt: giữ đúng nguyên tắc "không service nào gọi sync service khác" của dự án, chấp
+nhận khoảng tạo-order-rồi-huỷ ngắn nếu hết hàng). common-libs 1.8.0 thêm 3 event:
+`InventoryReservationRequestedEvent` (commerce→fulfillment, publish ngay sau khi tạo order
+ở CẢ 2 nơi: `StartCheckoutUseCase` và `CreateOrderFromAuctionUseCase`) +
+`InventoryReservedEvent`/`InventoryReservationFailedEvent` (fulfillment→commerce, topic mới
+`fulfillment-events`). fulfillment-service được thêm outbox+Kafka (trước đó hoàn toàn
+standalone, không có cả 2). `ReserveForOrderUseCase` giữ hàng cả order trong **1
+transaction** — item nào thiếu hàng thì exception lan ra làm Spring tự rollback TOÀN BỘ
+(kể cả các item đã giữ được trước đó trong vòng lặp), không cần code compensate/release
+tay. commerce-service nhận `InventoryReservationFailed` → tự huỷ order
+(`CancelOrderDueToStockFailureUseCase`, system-triggered, publish `OrderCancelledEvent` y
+hệt đường buyer-cancel để auction-service vẫn xử lý thống nhất). `OrderPaid`/`OrderCancelled`
+→ fulfillment-service tự commit/release toàn bộ reservation của order đó (tìm qua tiền tố
+`referenceId = "<orderId>:<skuId>"`, không cần thêm cột DB). **Giới hạn đã biết**:
+`productId` được dùng làm `skuId` luôn (vì hiện mỗi product chỉ có đúng 1 SKU — nếu sau
+này 1 product có nhiều SKU thì chỗ này phải sửa). Verify sống đủ cả 3 luồng qua Docker:
+(1) checkout đủ hàng → reserve → huỷ → release; (2) checkout thiếu hàng → order tự
+`AWAITING_PAYMENT → CANCELLED` sau vài giây, tồn kho không đổi (nhờ rollback transaction).
+59 test (fulfillment-service) + 67 test (commerce-service), tất cả pass. Commit `5abc498`
+(fulfillment-service) + `d451231` (commerce-service) + `999a992` (infra).
+
+⬜ **Chưa làm**: Shipping & Logistics (SRS 3.6.2). Privilege gating riêng cho
+reserve/commit/release (hiện chỉ yêu cầu authenticated() — vì caller thật là
+commerce-service qua Kafka, không phải người dùng cuối, nên privilege theo kiểu
+`@RequiresPrivilege` chưa thật sự cần thiết; endpoint REST hiện tại chủ yếu để test/demo
+thủ công).
 
 ### Hạ tầng
 `discovery-server`/`api-gateway`/`common-libs`/`infra` (docker-compose) hoạt động tốt, đã
@@ -257,8 +282,9 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      thêm rule.
    - ⬜ Push notification thật.
    - ⬜ Refund thật, invoice.
-   - ✅ (2026-10-10) Fulfillment Service — Inventory core đứng độc lập, xem mục 4
-     (Fulfillment Service) để biết chi tiết + phần chưa làm (nối checkout thật).
+   - ✅ (2026-10-10) Fulfillment Service — Inventory core + đã nối vào checkout thật của
+     commerce-service (bất đồng bộ qua Kafka), xem mục 4 (Fulfillment Service) để biết
+     chi tiết.
 
 *(Đánh dấu ✅ khi xong, cập nhật ngày + tóm tắt ngắn ở đây thay vì để trạng thái cũ.)*
 
