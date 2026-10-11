@@ -29,7 +29,7 @@ Nhóm 4 người, leader là user của conversation này (Trần Nguyễn Minh 
 
 ```
 C:\FPT\
-  common-libs/        # 4 module dùng chung, version hiện tại 1.4.0
+  common-libs/        # 4 module dùng chung, version hiện tại 1.10.0
   discovery-server/    # Eureka, port 8761
   api-gateway/          # Spring Cloud Gateway (WebFlux), port 8080
   user-service/         # port 8081, DB user_db (postgres port 5432)
@@ -181,10 +181,50 @@ order đã REFUNDED → no-op, không gọi lại Stripe); order chưa PAID → 
 
 **Cố ý chỉ xử lý tiền, KHÔNG đụng tồn kho/hàng hoá** — service chưa có shipment tracking
 (SRS 3.6.2, Shipping & Logistics, vẫn 0%) nên không thể tự biết đơn đã giao hay chưa để
-quyết định có nhập lại kho hay không. Phần "refund hàng" (phân biệt 3 case: chưa giao/đã
-giao-đã trả/đã giao-chưa trả) **đã bàn với user, chủ động để làm sau** — cần ít nhất 1 cờ
-trạng thái giao hàng, có thể cần nguyên 1 luồng Return/RMA, không tự chế thêm khi chưa
-thống nhất.
+quyết định có nhập lại kho hay không. Phần "refund hàng" lúc đó đã bàn với user, chủ động
+để làm sau — xem mục ngay dưới đây, đã làm xong.
+
+✅ (2026-10-11) **Refund hàng (goods) — bản tối giản, không carrier/tracking thật** — làm
+tiếp ngay sau refund tiền, theo đúng quyết định "refund tiền trước, refund hàng sau" của
+user. SRS 3.6.2 (Shipping & Logistics đầy đủ: carrier adapter, shipping quote, multi-carrier,
+circuit breaker...) được xác định là quá lớn cho scope capstone — brainstorm với user chốt
+bản tối giản:
+- `Order` thêm `shippedAt` (migration V5). `POST /orders/{id}/mark-shipped` — chỉ Seller sở
+  hữu item trong order mới gọi được, privilege mới `ORDER.MARK_SHIPPED` (seed ở user-service
+  V14 cho Seller + Admin — **không có trong bảng privilege gốc SRS**, đã tra lại xác nhận
+  không có code nào tái dùng được, vì shipping chưa từng được scope cho v1.0). `GET
+  /orders/selling` — Seller xem order chứa sản phẩm của mình, tái dùng đúng privilege
+  `ORDER.LIST` (giống cách `/orders/me` và `/orders` đã làm — cùng privilege, khác endpoint
+  theo role).
+- `RefundOrderUseCase` giờ rẽ nhánh theo `shippedAt`: **chưa giao** → tự động restock ngay
+  (publish `OrderReturnReceivedEvent`, fulfillment-service nghe và gọi lại
+  `IntakeInventoryUseCase` có sẵn). **Lưu ý kỹ thuật quan trọng phát hiện giữa chừng**: ban
+  đầu định dùng lại `ReleaseReservationUseCase` (như `OrderCancelled`), nhưng reservation của
+  1 order đã PAID đã ở trạng thái COMMITTED (commit() trừ thẳng `total_quantity`, không chỉ
+  `reserved_quantity`) — `release()` chỉ tác dụng với reservation còn PENDING nên sẽ no-op
+  im lặng, hàng **không** thực sự về kho. Phải dùng intake (nhập kho mới) thay vì release.
+  Bắt được lỗi này qua live-verify trước khi báo xong, y hệt kiểu bug
+  LazyInitializationException/thiếu `@Transactional` đã gặp trước đó trong dự án.
+- **Đã giao** → vẫn chỉ refund tiền (giữ nguyên hành vi cũ), không tự đụng kho.
+- Resource mới `ReturnRequest` (migration V6, `return_requests` table) cho case đã giao +
+  đã refund mà hàng thật sự trả lại: `POST /orders/{id}/returns` (tạo, chỉ hợp lệ khi order
+  đã REFUNDED và đã shipped) → `POST /returns/{id}/receive` (xác nhận đã nhận lại hàng →
+  publish `OrderReturnReceivedEvent`, restock, idempotent) hoặc `POST /returns/{id}/reject`
+  (từ chối, không restock). Cả 3 endpoint tái dùng privilege `ORDER.REFUND` có sẵn
+  (Admin/Support Staff) — không cần privilege mới.
+- common-libs 1.10.0: `OrderRefundedEvent` thêm field `shipped` (chỉ để tham khảo/audit, fulfillment-service
+  KHÔNG dùng để quyết định restock nữa — xem lỗi kỹ thuật ở trên), event mới
+  `OrderReturnReceivedEvent(orderId, items)` dùng chung cho cả 2 trigger (refund-trước-khi-
+  giao và return-đã-nhận).
+- Route gateway thiếu `/api/v1/returns/**` → 404, phát hiện và fix lúc verify sống (thêm vào
+  predicate route commerce-service).
+- Verify sống đầy đủ qua Docker + Stripe test mode thật: mua→trả tiền→refund trước khi giao
+  → tồn kho tự tăng lại ngay (8→9); mua→trả tiền→seller mark-shipped→refund→tồn kho **giữ
+  nguyên** (không tự restock); tạo ReturnRequest cho order đã refund+shipped→admin receive→
+  tồn kho tăng lại (8→9), gọi receive lần 2 vẫn idempotent không tăng thêm; reject→không đổi
+  tồn kho; Buyer gọi mark-shipped/tạo return đều bị 403 đúng; tạo return cho order chưa giao
+  bị 409 `RETURN_NOT_APPLICABLE` đúng. Commit `cd7f5c2` (commerce-service) + `a781f34`
+  (fulfillment-service) + `527d80c` (user-service) + `eea8f22` (api-gateway, fix route).
 
 Verify sống đầy đủ qua Docker thật + Stripe test mode qua trình duyệt (thẻ test
 4242 4242 4242 4242): tạo product → intake tồn kho → buyer mua → thanh toán Stripe thật
@@ -254,7 +294,17 @@ này 1 product có nhiều SKU thì chỗ này phải sửa). Verify sống đ�
 59 test (fulfillment-service) + 67 test (commerce-service), tất cả pass. Commit `5abc498`
 (fulfillment-service) + `d451231` (commerce-service) + `999a992` (infra).
 
-⬜ **Chưa làm**: Shipping & Logistics (SRS 3.6.2). Privilege gating riêng cho
+✅ (2026-10-11) **Restock theo OrderReturnReceivedEvent** — `IntakeForReturnUseCase` mới,
+nghe event `OrderReturnReceived` từ commerce-service (2 trigger: refund trước khi giao, và
+Admin xác nhận return sau khi giao — xem mục commerce-service, phần "Refund hàng"), gọi lại
+`IntakeInventoryUseCase` có sẵn cho từng line item. **Không** dùng `ReleaseReservationUseCase`
+cho việc này — reservation của order đã PAID đã COMMITTED (trừ thẳng `total_quantity`),
+release chỉ tác dụng với PENDING nên sẽ no-op im lặng nếu dùng sai. common-libs 1.10.0.
+Commit `a781f34`.
+
+⬜ **Chưa làm**: Shipping & Logistics (SRS 3.6.2) đầy đủ — carrier adapter, shipping quote,
+multi-carrier, circuit breaker... (đã đánh giá là quá lớn cho scope hiện tại, xem mục
+commerce-service "Refund hàng" để biết bản tối giản đã làm thay). Privilege gating riêng cho
 reserve/commit/release (hiện chỉ yêu cầu authenticated() — vì caller thật là
 commerce-service qua Kafka, không phải người dùng cuối, nên privilege theo kiểu
 `@RequiresPrivilege` chưa thật sự cần thiết; endpoint REST hiện tại chủ yếu để test/demo
@@ -322,8 +372,10 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
    - ✅ (2026-10-10) Admin/Support Staff xem tất cả order — xem mục 4 (commerce-service).
      Commit `9cbab8e`.
    - ✅ (2026-10-11) Refund tiền thật qua Stripe — xem mục 4 (commerce-service). Commit
-     `19022e5`. **Refund hàng/tồn kho vẫn để sau** (đã thống nhất với user, xem ghi chú
-     trong mục 4), invoice/receipt vẫn chưa làm.
+     `19022e5`.
+   - ✅ (2026-10-11) Refund hàng (goods) — bản tối giản, xem mục 4 (commerce-service +
+     fulfillment-service). Commit `cd7f5c2`/`a781f34`/`527d80c`/`eea8f22`. invoice/receipt
+     vẫn chưa làm.
 
 *(Đánh dấu ✅ khi xong, cập nhật ngày + tóm tắt ngắn ở đây thay vì để trạng thái cũ.)*
 
