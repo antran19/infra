@@ -172,10 +172,30 @@ cả 4 role đều có), nhưng endpoint check thêm role qua `TokenDetails` —
 mình" qua `/orders/me`. Verify sống: Admin thấy đủ 8 order từ nhiều buyer khác nhau, Buyer
 dùng chung token gọi `/orders` bị `ORDER_LIST_ALL_FORBIDDEN` (403). Commit `9cbab8e`.
 
-⚠️/❌ **Vẫn thiếu**: refund thật (huỷ order đã thanh toán chỉ là out-of-scope có chủ đích,
-chưa code), invoice/receipt, cart vẫn không re-validate giá/tồn kho NGAY lúc thêm vào giỏ/
-trước khi tạo order, chưa có cart-expiration job. (Bug route gateway đã fix 2026-10-09, xem
-mục 6.)
+✅ (2026-10-11) **Refund tiền thật qua Stripe** — `POST /api/v1/orders/{id}/refund`
+(`ORDER.REFUND`, đã đúng scope sẵn trong SRS seed: chỉ Admin/Support Staff). `Order` giờ
+lưu `paymentReference` (Stripe PaymentIntent id, chụp lúc `confirm-payment` thành công) —
+refund gọi thẳng `com.stripe.model.Refund.create(...)` với id đó. Idempotent (refund lại
+order đã REFUNDED → no-op, không gọi lại Stripe); order chưa PAID → 409
+`ORDER_NOT_REFUNDABLE`. Migration V4 (`payment_reference` column + status `REFUNDED`).
+
+**Cố ý chỉ xử lý tiền, KHÔNG đụng tồn kho/hàng hoá** — service chưa có shipment tracking
+(SRS 3.6.2, Shipping & Logistics, vẫn 0%) nên không thể tự biết đơn đã giao hay chưa để
+quyết định có nhập lại kho hay không. Phần "refund hàng" (phân biệt 3 case: chưa giao/đã
+giao-đã trả/đã giao-chưa trả) **đã bàn với user, chủ động để làm sau** — cần ít nhất 1 cờ
+trạng thái giao hàng, có thể cần nguyên 1 luồng Return/RMA, không tự chế thêm khi chưa
+thống nhất.
+
+Verify sống đầy đủ qua Docker thật + Stripe test mode qua trình duyệt (thẻ test
+4242 4242 4242 4242): tạo product → intake tồn kho → buyer mua → thanh toán Stripe thật
+(500.000đ, đủ ngưỡng tối thiểu Stripe) → `paymentReference` lưu đúng → Buyer gọi refund bị
+403 (thiếu privilege) → Admin refund 200 → status REFUNDED → gọi lại Stripe refund API xác
+nhận charge đã refund thật (`charge_already_refunded`) → Admin refund lần 2 vẫn 200
+(idempotent, không lỗi). Commit `19022e5`.
+
+⚠️/❌ **Vẫn thiếu**: refund hàng/tồn kho (xem trên — để sau), invoice/receipt, cart vẫn
+không re-validate giá/tồn kho NGAY lúc thêm vào giỏ/trước khi tạo order, chưa có
+cart-expiration job. (Bug route gateway đã fix 2026-10-09, xem mục 6.)
 
 ### notification-service (port 8084)
 ✅ Tự động ghi log mọi event nghe được từ Kafka (`auction-events`/`catalog-events`/
@@ -294,7 +314,6 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      vì SRS không yêu cầu cụ thể cơ chế này — cần thống nhất với user trước khi tự chế
      thêm rule.
    - ⬜ Push notification thật.
-   - ⬜ Refund thật, invoice.
    - ✅ (2026-10-10) Fulfillment Service — Inventory core + đã nối vào checkout thật của
      commerce-service (bất đồng bộ qua Kafka), xem mục 4 (Fulfillment Service) để biết
      chi tiết.
@@ -302,6 +321,9 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      xem mục 4 (user-service). Commit `a21b835`.
    - ✅ (2026-10-10) Admin/Support Staff xem tất cả order — xem mục 4 (commerce-service).
      Commit `9cbab8e`.
+   - ✅ (2026-10-11) Refund tiền thật qua Stripe — xem mục 4 (commerce-service). Commit
+     `19022e5`. **Refund hàng/tồn kho vẫn để sau** (đã thống nhất với user, xem ghi chú
+     trong mục 4), invoice/receipt vẫn chưa làm.
 
 *(Đánh dấu ✅ khi xong, cập nhật ngày + tóm tắt ngắn ở đây thay vì để trạng thái cũ.)*
 
