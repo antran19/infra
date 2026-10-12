@@ -223,3 +223,12 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     ports:
       - "8086:8086"
+
+  # Live log viewer for every container, in the browser at http://localhost:9999.
+  # Mounts the Docker socket read-only: local development only, never expose publicly.
+  dozzle:
+    image: amir20/dozzle:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "9999:8080"
