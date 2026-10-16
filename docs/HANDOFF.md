@@ -456,9 +456,20 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      `reason = BUYER_REQUESTED`; lý do khác (hết hàng, ...) gọi `ClosePaymentWithoutPenaltyUseCase`
      (đặt cờ `payment_timeout_emitted` mà không phát event, để `PaymentDeadlineJob` không phạt
      sau 24h).
+   - ✅ (2026-10-16) **Retry + dead-letter cho Kafka** ở cả 6 service có listener: mỗi service
+     có `infrastructure/messaging/KafkaErrorHandlingConfig` (Spring Boot tự gắn vào mọi
+     listener). Listener không còn `catch (Exception)` nuốt lỗi. Lỗi → thử lại 3 lần (chờ 1s,
+     2s, 4s) → vẫn lỗi thì chép record sang topic `<topic>.DLT` và đi tiếp. JSON hỏng hoặc
+     `DomainException` (lỗi nghiệp vụ, thử lại vô ích) → vào DLT ngay. Notification: payload
+     không parse được ném `MalformedEventException` (cũng vào DLT ngay). Integration test thật
+     với Kafka: `notification-service/.../KafkaErrorHandlingIntegrationTest`. Xem DLT:
+     `docker exec infra-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server
+     localhost:9092 --topic commerce-events.DLT --from-beginning` (Git Bash trên Windows: thêm
+     `MSYS_NO_PATHCONV=1` phía trước, không thì nó đổi `/opt/...` thành đường dẫn Windows). **Chưa có** công cụ chạy lại
+     (replay) record từ DLT, cũng chưa có cảnh báo khi DLT có record mới.
    - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (c) FE: form địa chỉ, nhập
-     `initialStock`, nút nhập thêm kho; (d) retry + dead-letter cho Kafka listeners (chưa
-     service nào có); (e) preference thông báo; (f) thống kê cho Seller.
+     `initialStock`, nút nhập thêm kho; (e) preference thông báo; (f) thống kê cho Seller;
+     (g) kiểm kho + giá lúc thêm giỏ/checkout, kiểm kho lúc tạo phiên đấu giá; (h) replay DLT.
 
 *(Đánh dấu ✅ khi xong, cập nhật ngày + tóm tắt ngắn ở đây thay vì để trạng thái cũ.)*
 
