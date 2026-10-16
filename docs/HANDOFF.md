@@ -1,6 +1,6 @@
 # Project Nexus — Handoff / Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-09. File này tồn tại để 1 session Claude Code mới đọc xong là
+**Cập nhật lần cuối:** 2026-10-16. File này tồn tại để 1 session Claude Code mới đọc xong là
 nắm được toàn bộ trạng thái dự án **mà không cần đọc lại từng file code** — tốn ít token hơn
 nhiều so với tự khám phá lại từ đầu. Khi có thay đổi lớn (thêm service, đổi kiến trúc, fix bug
 quan trọng), **cập nhật file này** thay vì để nó lỗi thời như lần trước (bản cũ dừng ở lúc
@@ -25,11 +25,20 @@ Nhóm 4 người, leader là user của conversation này (Trần Nguyễn Minh 
   bằng `git config http.version HTTP/1.1` + `http.postBuffer 524288000` (repo-local config,
   đã set sẵn trong `gitlab-group2-nexus`, không cần set lại).
 
+**GitLab có 2 nhánh với 2 vai trò khác nhau** (từ 2026-10-07): `main` = bản đầy đủ do leader
+code solo (đồng bộ từ GitHub bằng subtree như trên); `develop` = **bản khung** (cấu trúc
+hexagonal + file cấu hình, chưa có logic nghiệp vụ) để thành viên trong nhóm tự viết, mọi
+merge request của họ đi vào `develop`. Hai nhánh KHÔNG đồng bộ với nhau: `catalog-service`
+ở `develop` là bản các bạn tự viết (có thể khác `main`, ví dụ chưa có `initialStock`), và
+`nexus-frontend/API.md` ở `develop` có chú thích "chưa có ở nhánh develop" riêng, nên khi sync
+`API.md` sang `develop` chỉ lấy lại mục tương ứng, đừng ghi đè cả file. Máy chủ GitLab của
+trường báo bảo trì 21:00–22:00 hằng ngày đến hết 2026-10-18, tránh push trong khung giờ đó.
+
 ## 2. Các repo (clone làm sibling trong `C:\FPT`)
 
 ```
 C:\FPT\
-  common-libs/        # 4 module dùng chung, version hiện tại 1.10.0
+  common-libs/        # 4 module dùng chung, version hiện tại 1.11.0
   discovery-server/    # Eureka, port 8761
   api-gateway/          # Spring Cloud Gateway (WebFlux), port 8080
   user-service/         # port 8081, DB user_db (postgres port 5432)
@@ -122,6 +131,12 @@ bị 403 đúng. Migration V13. Commit `a21b835`.
 
 ❌ **Vẫn thiếu**: Dispute handling (SRS có nhắc) — chưa có gì.
 
+✅ (2026-10-13→16) **Privilege mới cho luồng bán hàng**, đều không có trong bảng privilege gốc
+của SRS: `ORDER.MARK_SHIPPED` (V14, Seller + Admin), `INVENTORY.MANAGE`/`INVENTORY.VIEW`
+(V15: MANAGE chỉ Admin; VIEW cho Admin/Seller/Support Staff), `INVENTORY.RESTOCK` (V16, Seller
++ Admin; quyền sở hữu do fulfillment-service tự kiểm, privilege này một mình không cho đụng
+kho người khác). Muốn token có privilege mới phải login lại.
+
 ### catalog-service (port 8082)
 ✅ Product CRUD + đổi trạng thái (DRAFT/ACTIVE/INACTIVE/**SOLD** mới thêm) + search (Postgres
 full-text search, filter q/categoryId/status/sellerId) + discover (trang chủ). Category CRUD
@@ -141,6 +156,17 @@ SRS mô tả.
 ⚠️ **Chưa xử lý case bid-and-run**: nếu người thắng không thanh toán (24h timeout), product
 vẫn đứng yên ở SOLD vĩnh viễn — không có relist/revert vì chưa làm cơ chế "second-chance"
 (xem mục 6, gap #2 của audit "luồng mua hàng đấu giá").
+
+✅ (2026-10-16) **`initialStock` khi tạo sản phẩm; `ProductCreatedEvent` mang `sellerId` và
+`initialStock`** (common-libs 1.11.0; constructor 3 tham số cũ và event cũ vẫn đọc được).
+Để fulfillment-service tự mở tồn kho + ghi chủ kho từ sự kiện, không gọi sync sang catalog.
+`CreateProductRequest.initialStock` (tuỳ chọn, 0–1.000.000, mặc định 0). catalog-service
+nâng common-libs 1.6.0→1.11.0.
+
+⚠️ **Hai mã dễ nhầm**: `Sku.create` sinh `skuId` ngẫu nhiên, KHÁC `productId`. Response sản
+phẩm trả cả `id` (mã sản phẩm) lẫn `skuId`; tồn kho và mua hàng luôn tính theo **`id`/
+productId** (xem mục fulfillment bên dưới). Nhập kho theo `skuId` là sai và đơn sẽ báo hết
+hàng dù kho có hàng.
 
 ### auction-service (port 8083)
 ✅ Đầy đủ nhất trong toàn hệ thống: tạo/sửa/huỷ đấu giá, lifecycle tự động
@@ -233,9 +259,33 @@ Verify sống đầy đủ qua Docker thật + Stripe test mode qua trình duy�
 nhận charge đã refund thật (`charge_already_refunded`) → Admin refund lần 2 vẫn 200
 (idempotent, không lỗi). Commit `19022e5`.
 
-⚠️/❌ **Vẫn thiếu**: refund hàng/tồn kho (xem trên — để sau), invoice/receipt, cart vẫn
-không re-validate giá/tồn kho NGAY lúc thêm vào giỏ/trước khi tạo order, chưa có
-cart-expiration job. (Bug route gateway đã fix 2026-10-09, xem mục 6.)
+✅ (2026-10-13→16) **Các tính năng thêm sau refund hàng**:
+- **Hoá đơn** `GET /orders/{id}/invoice`: suy ra từ đơn đã PAID/REFUNDED, không lưu bảng,
+  không migration; số hoá đơn `INV-<năm thanh toán>-<8 ký tự đầu orderId>`.
+- **Giỏ hàng hết hạn**: `ExpireInactiveCartsJob` xoá giỏ không hoạt động quá 30 ngày
+  (`nexus.cart.max-inactive-days`).
+- **Tự huỷ đơn mua trực tiếp chưa thanh toán sau 30 phút** (`ExpireUnpaidOrdersJob` quét mỗi
+  60s; `nexus.order.unpaid-timeout-minutes`, `nexus.order.unpaid-expiry-check-interval-ms`).
+  Chỉ đơn `auctionId = null`: đơn đấu giá có hạn 24h riêng và bị phạt uy tín bên auction, không
+  được lẫn. Mỗi đơn được huỷ trong giao dịch riêng (khoá dòng, kiểm tra lại còn
+  AWAITING_PAYMENT và còn quá hạn), phát `OrderCancelled` lý do `PAYMENT_TIMEOUT` → kho nhả
+  hàng. Phiên Stripe đặt `expires_at` = 30 phút 30 giây (Stripe tối thiểu 30 phút) để thu
+  hẹp cửa sổ "trả tiền cho đơn đã huỷ"; **khe hở vẫn còn** nếu người mua mở phiên rất muộn.
+- **Địa chỉ giao hàng** (migration V7, 4 cột `ship_*` cho phép rỗng):
+  `PUT /orders/{id}/shipping-address` (BUYER, `CHECKOUT.START`; đơn phải còn
+  AWAITING_PAYMENT; dùng cho cả đơn mua trực tiếp lẫn đơn từ đấu giá, vì đơn đấu giá tự tạo
+  chưa có địa chỉ). `POST .../checkout-session` trả 409 `SHIPPING_ADDRESS_REQUIRED` khi chưa
+  có. Seller thấy địa chỉ trong `/orders/selling`. Số điện thoại 8–15 chữ số (bỏ khoảng
+  trắng, dấu chấm, gạch).
+- **Quy tắc xem đơn** (`OrderAccessPolicy`, dùng chung cho `GET /orders/{id}` và `/invoice`):
+  chỉ buyer, seller có hàng trong đơn, ADMIN/SUPPORT_STAFF; người khác 403. Cần vì đơn giờ
+  chứa địa chỉ và số điện thoại. **Bẫy đã gặp**: `Set.of(...).contains(null)` ném
+  `NullPointerException`, một token không có claim `role` từng gây 500; `canViewAnyOrder`
+  trong `OrderController` đã xử lý null.
+
+⚠️/❌ **Vẫn thiếu**: webhook Stripe (xác nhận thanh toán đang phụ thuộc FE gọi
+`confirm-payment` sau khi Stripe chuyển hướng), tự hoàn tiền khi khách trả cho đơn đã huỷ,
+cart không re-validate giá/tồn kho lúc thêm giỏ, phí vận chuyển và thuế.
 
 ### notification-service (port 8084)
 ✅ Tự động ghi log mọi event nghe được từ Kafka (`auction-events`/`catalog-events`/
@@ -254,8 +304,10 @@ bằng cách đọc log này (xem commit `2ef9fd7`). Khi có SMTP credentials th
 
 ❌ **Vẫn thiếu**: push notification thật (chỉ email). Không có preference người dùng.
 Không có retry/delivery-status khi gửi email thất bại (log lỗi rồi bỏ qua, fail-soft).
-Không có health-check cho message broker (SRS yêu cầu). Không có springdoc/Swagger (các
-service khác đều có).
+(2026-10-13→15) **Health-check broker** (`BrokerHealthJob` 15s/lần, `BrokerHealthIndicator`
+trên `/actuator/health`; Kafka sập đủ ngưỡng thì tự tạm dừng consumer và ghi
+`MessageBrokerUnavailable`, hồi phục thì tiếp tục và ghi `MessageBrokerRecovered`),
+**Dozzle** xem log container ở http://localhost:9999 và **Swagger** đã có.
 
 ### Fulfillment Service (port 8086, repo mới `fulfillment-service`, DB `fulfillment_db` 5437)
 ✅ (2026-10-10) **Inventory core (SRS 3.6.1), 1 warehouse cố định ("MAIN", SRS cho phép ở
@@ -302,19 +354,30 @@ cho việc này — reservation của order đã PAID đã COMMITTED (trừ th�
 release chỉ tác dụng với PENDING nên sẽ no-op im lặng nếu dùng sai. common-libs 1.10.0.
 Commit `a781f34`.
 
+✅ (2026-10-14→16) **Chủ kho và người bán tự nhập kho, qua sự kiện**:
+- **Quy ước (đã chốt)**: kho khoá theo **`productId`**. Commerce gửi `productId` trong trường
+  `skuId` của event và kho lưu vào cột `sku_id`; KHÔNG phải `skuId` riêng của catalog. REST
+  của kho đã đổi tên trường `skuId`→`productId` (body và response của `/inventory`,
+  `/reservations`); event và DB vẫn tên `skuId`/`sku_id` vì đổi sẽ phá tương thích.
+- `CatalogEventsListener` nghe `catalog-events`: `ProductCreated` → `RegisterProductStock
+  UseCase` ghi chủ kho (`product_stock_owners`, migration V3, chèn `ON CONFLICT DO NOTHING`
+  nên sự kiện giao lại không cộng kho hai lần) và nhập `initialStock`. Xử lý lỗi theo quy
+  ước cũ: ghi log rồi bỏ qua, chưa retry/dead-letter, Admin vẫn nhập kho tay được.
+- `POST /inventory/{productId}/restock` (`INVENTORY.RESTOCK`): Seller chỉ nhập cho sản phẩm
+  của mình (403 `NOT_THE_PRODUCT_OWNER`, kể cả sản phẩm chưa có chủ kho để không lộ id nào
+  tồn tại); Admin (giữ `INVENTORY.MANAGE`) nhập mọi sản phẩm. Trả lại tồn kho sau khi nhập.
+- Gateway thêm tuyến `/api/v1/inventory/**` → fulfillment-service (`/reservations` cố ý
+  KHÔNG mở ra ngoài, commerce chạy nó qua Kafka).
+- Sản phẩm tạo trước 2026-10-16 chưa có chủ kho, chỉ Admin nhập kho được.
+
 ⬜ **Chưa làm**: Shipping & Logistics (SRS 3.6.2) đầy đủ — carrier adapter, shipping quote,
 multi-carrier, circuit breaker... (đã đánh giá là quá lớn cho scope hiện tại, xem mục
-commerce-service "Refund hàng" để biết bản tối giản đã làm thay). Privilege gating riêng cho
-reserve/commit/release (hiện chỉ yêu cầu authenticated() — vì caller thật là
-commerce-service qua Kafka, không phải người dùng cuối, nên privilege theo kiểu
-`@RequiresPrivilege` chưa thật sự cần thiết; endpoint REST hiện tại chủ yếu để test/demo
-thủ công).
+commerce-service "Refund hàng" để biết bản tối giản đã làm thay). Privilege gating cho reserve/commit/release đã làm (`INVENTORY.MANAGE`/`VIEW`, user-service V15).
 
 ### Hạ tầng
 `discovery-server`/`api-gateway`/`common-libs`/`infra` (docker-compose) hoạt động tốt, đã
 verify end-to-end nhiều lần qua Docker thật (kể cả thanh toán Stripe thật qua trình duyệt).
-API versioning `/api/v1` nhất quán. Swagger có ở user/catalog/auction/commerce-service, thiếu
-ở notification-service.
+API versioning `/api/v1` nhất quán. Swagger có ở mọi service (notification-service thêm 2026-10-15).
 
 ## 5. Cơ chế JWT (quan trọng nếu đụng tới auth)
 
@@ -376,6 +439,17 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
    - ✅ (2026-10-11) Refund hàng (goods) — bản tối giản, xem mục 4 (commerce-service +
      fulfillment-service). Commit `cd7f5c2`/`a781f34`/`527d80c`/`eea8f22`. invoice/receipt
      vẫn chưa làm.
+   - ✅ (2026-10-12→16) Health-check broker + Dozzle (notification), giỏ hàng hết hạn, hoá
+     đơn, tự huỷ đơn quá hạn + `expires_at` Stripe, địa chỉ giao hàng + quy tắc xem đơn, tồn
+     kho (`initialStock`, chủ kho, restock, quy ước `productId`). Chi tiết ở mục 4. Smoke test
+     xuyên suốt 36/36 bước đạt (mục 8).
+   - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (a) **phạt oan người thắng đấu giá khi đơn bị huỷ
+     vì hết hàng**: `CommerceEventsListener` của auction-service coi mọi `OrderCancelled` có
+     `auctionId` là bùng kèo, không xét `reason`, nên người thắng bị phạt điểm uy tín dù lỗi
+     ở người bán (nên phân biệt `reason`, hoặc chặn tạo phiên khi người bán chưa có tồn kho);
+     (b) webhook Stripe + tự hoàn tiền cho thanh toán muộn; (c) FE: form địa chỉ, nhập
+     `initialStock`, nút nhập thêm kho; (d) retry + dead-letter cho Kafka listeners (chưa
+     service nào có); (e) preference thông báo; (f) thống kê cho Seller.
 
 *(Đánh dấu ✅ khi xong, cập nhật ngày + tóm tắt ngắn ở đây thay vì để trạng thái cũ.)*
 
@@ -387,3 +461,69 @@ chạy script Python strip tag XML trên `word/document.xml` → text thuần (~
 nội dung SRS (mục 2.7 bảng privilege, mục 3.1-3.6 requirement chi tiết, mục 5 NFR) đã được đọc
 và đối chiếu với code thật ít nhất 1 lần (2026-10-09) — xem mục 4 ở trên là kết quả, không cần
 đọc lại SRS từ đầu trừ khi cần tra câu chữ chính xác.
+
+## 8. Chạy cả cụm và smoke test
+
+```bash
+cd infra
+./build-all.sh              # mvn install common-libs + package các service (gồm fulfillment-service)
+docker compose build
+docker compose up -d
+```
+
+- Cần `STRIPE_SECRET_KEY` (khoá **test**, `sk_test_...`) trong môi trường khi chạy
+  `docker compose` (hoặc `infra/.env`, **không commit**). Compose đọc `${STRIPE_SECRET_KEY}`
+  lúc tạo container: tạo lại `commerce-service` khi biến này rỗng sẽ làm container mất khoá.
+  Muốn dựng lại một service mà không đụng các service khác: `docker compose up -d --no-deps
+  <tên>`.
+- Cổng: gateway 8080, Eureka 8761, user 8081, catalog 8082, auction 8083, notification 8084,
+  commerce 8085, fulfillment 8086, Dozzle 9999. Sau khi khởi động lại, gateway có thể trả 500
+  vài giây do bộ nhớ đệm Eureka cũ; tự hết.
+- **Smoke test xuyên suốt qua gateway** (đã chạy 2026-10-16, 36/36 bước đạt): tạo admin,
+  hai seller (qua luồng yêu cầu bán hàng + duyệt), buyer; danh mục; sản phẩm có `initialStock`;
+  kho tự mở qua Kafka; nhập thêm đúng chủ/sai chủ/Admin; giữ hàng khi đặt; đơn vượt tồn kho tự
+  huỷ; quy tắc xem đơn; địa chỉ giao hàng chặn thanh toán; phiên Stripe; **người thật nhập
+  thẻ thử `4242 4242 4242 4242` trên trang Stripe**; xác nhận thanh toán; trừ kho; seller thấy
+  địa chỉ; đã giao; hoá đơn; hoàn tiền; trả hàng; nhập lại kho. Bước thẻ không tự động hoá
+  được, và sau khi thanh toán Stripe chuyển về `successUrl` (không có FE nào chạy ở đó thì
+  trình duyệt báo lỗi kết nối, vô hại). Dữ liệu thử dùng email `smoke-*@nexus.dev`, dọn bằng
+  cách xoá theo các email đó ở 5 cơ sở dữ liệu. Kịch bản (`smoke.py`, `cleanup.py`) không
+  nằm trong repo, chúng ở gói bàn giao riêng của leader.
+- **Chưa kiểm chứng chạy thật**: huỷ đơn quá hạn 30 phút (chỉ có test đơn vị và test truy vấn)
+  và luồng đấu giá đến thanh toán sau các thay đổi gần đây.
+
+## 9. Bẫy đã gặp (đọc trước khi vào việc)
+
+- **Build trên Windows với IDE mở**: IDE tự biên dịch vào `target/`, build trực tiếp trong
+  thư mục thật dễ gây lỗi `NoClassDefFoundError`/mapper cũ. Cách ổn định: chép service ra thư
+  mục tạm (loại `target/`), build và chạy test ở đó, rồi chép jar về `target/` khi cần dựng
+  Docker.
+- **Docker Desktop hay tắt** giữa chừng; test dùng Testcontainers sẽ báo "Could not find a
+  valid Docker environment". Bật lại rồi chạy lại.
+- **Sửa `common-libs`**: bump version trong cả 5 `pom.xml`, `mvn install` để service build
+  cục bộ được, rồi push để workflow phát hành lên GitHub Packages (mất khoảng 1 phút rưỡi);
+  sau đó mới nâng `common-libs.version` ở các service dùng nó. Tải từ GitHub Packages cần
+  token đọc gói (`read:packages`) trong `~/.m2/settings.xml`, server id `github`.
+- **Lệnh Maven chạy lâu** (cả bộ test của một service vài phút): chạy nền và chờ thông báo,
+  đừng lặp lại.
+- **`Set.of(...)`/`Map.of(...)` ném NPE với `contains(null)`**: luôn kiểm tra null trước.
+- **Kafka**: chỉ các service nghe topic mới nhận sự kiện; sự kiện lỗi hiện chỉ được ghi log
+  (chưa retry).
+- **Mọi chỗ dùng `SELECT … FOR UPDATE`** cần `@Transactional` ở use case, nếu không Hibernate
+  ném `TransactionRequiredException` (test mock repository sẽ che lỗi này).
+
+## 10. Chuyển sang máy khác (ví dụ MacBook)
+
+Mã nguồn đã nằm trên GitHub, không cần mang gì khác ngoài những thứ dưới đây.
+
+1. Cài JDK 21, Maven, Docker Desktop, git và (nếu dùng) `gh`.
+2. Clone **11 repo cạnh nhau** trong một thư mục: `infra`, `common-libs`, `discovery-server`,
+   `api-gateway`, `user-service`, `catalog-service`, `auction-service`, `notification-service`,
+   `commerce-service`, `fulfillment-service`, `nexus-frontend` (đều `github.com/antran19/<tên>`).
+3. `~/.m2/settings.xml` với server `github` (tên người dùng + token `read:packages`) để tải
+   `common-libs` đã phát hành. Hoặc `mvn install` `common-libs` cục bộ trước.
+4. Tạo `infra/.env` có `STRIPE_SECRET_KEY` thử (**không commit**).
+5. Build và chạy như mục 8.
+6. Với Claude Code: mở thư mục cha chứa các repo, bảo nó đọc file này đầu tiên; `CLAUDE.md`
+   của từng service sẽ được nạp khi làm việc trong thư mục đó. Những thứ **không** nằm trong
+   git (hướng dẫn agent review, ghi nhớ cách làm việc cá nhân) phải chép riêng.
