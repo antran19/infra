@@ -283,9 +283,17 @@ nhận charge đã refund thật (`charge_already_refunded`) → Admin refund l�
   `NullPointerException`, một token không có claim `role` từng gây 500; `canViewAnyOrder`
   trong `OrderController` đã xử lý null.
 
-⚠️/❌ **Vẫn thiếu**: webhook Stripe (xác nhận thanh toán đang phụ thuộc FE gọi
-`confirm-payment` sau khi Stripe chuyển hướng), tự hoàn tiền khi khách trả cho đơn đã huỷ,
-cart không re-validate giá/tồn kho lúc thêm giỏ, phí vận chuyển và thuế.
+✅ (2026-10-16) **Webhook Stripe** `POST /api/v1/payments/webhook` (không cần JWT, xác thực bằng
+chữ ký `Stripe-Signature` với khoá `STRIPE_WEBHOOK_SECRET`, để trống thì từ chối mọi lời gọi).
+Khách tắt tab sau khi trả tiền thì đơn vẫn `PAID`. Webhook và `confirm-payment` cùng đi qua
+`PaidOrderSettler` dưới khoá dòng: đơn `AWAITING_PAYMENT` → `PAID`; đơn đã `CANCELLED` (trả
+muộn) → tự hoàn tiền Stripe, đơn → `REFUNDED`, event `OrderRefunded` lý do
+`PAID_AFTER_CANCELLATION`; đơn đã `PAID`/`REFUNDED` → bỏ qua. Refund gửi kèm idempotency key
+`refund-<paymentIntent>`. Thử trên máy: cài Stripe CLI, `stripe listen --forward-to
+localhost:8080/api/v1/payments/webhook`, đặt khoá `whsec_...` nó in ra vào `infra/.env`
+(`STRIPE_WEBHOOK_SECRET=...`) rồi dựng lại commerce (nhớ bẫy `STRIPE_SECRET_KEY`, mục 9).
+
+⚠️/❌ **Vẫn thiếu**: cart không re-validate giá/tồn kho lúc thêm giỏ, phí vận chuyển và thuế.
 
 ### notification-service (port 8084)
 ✅ Tự động ghi log mọi event nghe được từ Kafka (`auction-events`/`catalog-events`/
@@ -443,11 +451,12 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      đơn, tự huỷ đơn quá hạn + `expires_at` Stripe, địa chỉ giao hàng + quy tắc xem đơn, tồn
      kho (`initialStock`, chủ kho, restock, quy ước `productId`). Chi tiết ở mục 4. Smoke test
      xuyên suốt 36/36 bước đạt (mục 8).
-   - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (a) **phạt oan người thắng đấu giá khi đơn bị huỷ
-     vì hết hàng**: `CommerceEventsListener` của auction-service coi mọi `OrderCancelled` có
-     `auctionId` là bùng kèo, không xét `reason`, nên người thắng bị phạt điểm uy tín dù lỗi
-     ở người bán (nên phân biệt `reason`, hoặc chặn tạo phiên khi người bán chưa có tồn kho);
-     (b) webhook Stripe + tự hoàn tiền cho thanh toán muộn; (c) FE: form địa chỉ, nhập
+   - ✅ (2026-10-16) Webhook Stripe + tự hoàn tiền khi trả muộn (xem mục 4, commerce-service).
+   - ✅ (2026-10-16) Hết phạt oan người thắng đấu giá: `CommerceEventsListener` chỉ phạt khi
+     `reason = BUYER_REQUESTED`; lý do khác (hết hàng, ...) gọi `ClosePaymentWithoutPenaltyUseCase`
+     (đặt cờ `payment_timeout_emitted` mà không phát event, để `PaymentDeadlineJob` không phạt
+     sau 24h).
+   - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (c) FE: form địa chỉ, nhập
      `initialStock`, nút nhập thêm kho; (d) retry + dead-letter cho Kafka listeners (chưa
      service nào có); (e) preference thông báo; (f) thống kê cho Seller.
 

@@ -204,6 +204,8 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       # Read from infra/.env (gitignored) -- never hardcode a real key here, this file is committed.
       NEXUS_PAYMENT_STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      # whsec_... printed by `stripe listen` (or the Stripe dashboard). Empty = webhook rejects all calls.
+      NEXUS_PAYMENT_STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     ports:
       - "8085:8085"
 
