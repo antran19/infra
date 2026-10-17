@@ -298,7 +298,23 @@ muộn) → tự hoàn tiền Stripe, đơn → `REFUNDED`, event `OrderRefunded
 localhost:8080/api/v1/payments/webhook`, đặt khoá `whsec_...` nó in ra vào `infra/.env`
 (`STRIPE_WEBHOOK_SECRET=...`) rồi dựng lại commerce (nhớ bẫy `STRIPE_SECRET_KEY`, mục 9).
 
-⚠️/❌ **Vẫn thiếu**: cart không re-validate giá/tồn kho lúc thêm giỏ, phí vận chuyển và thuế.
+✅ (2026-10-17) **Giá, tên, người bán của món trong giỏ lấy từ server** (trước đó lấy nguyên từ
+request: gọi API với `unitPrice: 1` là mua được giá 1đ, `sellerId` giả làm đơn hiện ở seller khác).
+commerce giữ bảng `product_snapshots` (migration V8) cập nhật từ `catalog-events` qua
+`CatalogEventsListener` → `SyncProductSnapshotUseCase` (ProductCreated chèn nếu chưa có, để sự
+kiện giao lại không đưa trạng thái về DRAFT; ProductStatusChanged/ProductUpdated sửa bản đã có).
+`ProductCreatedEvent` mang thêm `price` (common-libs 1.12.0, catalog gửi giá). Thêm giỏ: sản phẩm
+không có bản sao hoặc không `ACTIVE` → 409 `PRODUCT_NOT_AVAILABLE`. Checkout tính lại giá từng món
+theo bản sao (vá cả giỏ cũ có giá giả), món không còn bán → 409 `CART_ITEM_UNAVAILABLE`, giữ giỏ.
+Request thêm giỏ chỉ cần `productId` + `quantity` (trường cũ vẫn nhận nhưng bỏ qua). **Đánh đổi đã
+biết**: bản sao trễ ~4 giây sau khi seller bật ACTIVE; sản phẩm tạo trước bản sửa không có bản sao
+(giá chỉ đặt lúc tạo, không có API đổi giá), chỉ tạo lại sản phẩm mới mua được. Verify sống 9/9 bước
+(giá giả 1đ bị bỏ, seller giả bị bỏ, DRAFT/không tồn tại → 409, tắt bán sau khi vào giỏ → checkout
+409 + giữ giỏ, giỏ cũ có giá 1đ → đơn tính lại đúng giá); `smoke.py` 27/27, `smoke_auction.py`
+giai đoạn 1 30/30.
+
+⚠️/❌ **Vẫn thiếu**: kiểm tồn kho lúc thêm giỏ (đợt 2b) và lúc tạo đấu giá (đợt 2c), phí vận
+chuyển và thuế.
 
 ### notification-service (port 8084)
 ✅ Tự động ghi log mọi event nghe được từ Kafka (`auction-events`/`catalog-events`/
