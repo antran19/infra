@@ -436,7 +436,8 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
    - ⬜ Gap #2: không có relist/second-chance khi người thắng bùng kèo (auction kết thúc
      vĩnh viễn ở ENDED, hàng "mất trắng", chỉ người bùng kèo bị trừ điểm uy tín). Chưa làm
      vì SRS không yêu cầu cụ thể cơ chế này — cần thống nhất với user trước khi tự chế
-     thêm rule.
+     thêm rule. Đã thấy khi chạy thật (2026-10-17): người thắng huỷ đơn thì kho có lại 1 suất
+     nhưng sản phẩm vẫn kẹt ở `SOLD`, không ai mua hay đấu giá lại được.
    - ⬜ Push notification thật.
    - ✅ (2026-10-10) Fulfillment Service — Inventory core + đã nối vào checkout thật của
      commerce-service (bất đồng bộ qua Kafka), xem mục 4 (Fulfillment Service) để biết
@@ -512,8 +513,12 @@ docker compose up -d
   trình duyệt báo lỗi kết nối, vô hại). Dữ liệu thử dùng email `smoke-*@nexus.dev`, dọn bằng
   cách xoá theo các email đó ở 5 cơ sở dữ liệu. Kịch bản (`smoke.py`, `cleanup.py`) không
   nằm trong repo, chúng ở gói bàn giao riêng của leader.
-- **Chưa kiểm chứng chạy thật**: huỷ đơn quá hạn 30 phút (chỉ có test đơn vị và test truy vấn)
-  và luồng đấu giá đến thanh toán sau các thay đổi gần đây.
+- **Kiểm thử đấu giá** (2026-10-17, 33/33 bước đạt, `smoke_auction.py` trong gói bàn giao):
+  tạo phiên → ACTIVE, seller không tự đặt giá được, giá thấp bị từ chối, thông báo Outbid, ép hết
+  giờ bằng SQL → ENDED đúng người thắng/giá, sản phẩm SOLD, đơn tự tạo + giữ 1 suất, trả Stripe
+  → `paidAt` có, kho trừ về 0. Người thắng tự huỷ đơn → trừ uy tín ngay 50→40 (TRUSTED→NORMAL),
+  nhả kho. Đơn mua trực tiếp lùi `created_at` 31 phút → job huỷ (`CANCELLED`), nhả kho, không đụng
+  uy tín.
 
 ## 9. Bẫy đã gặp (đọc trước khi vào việc)
 
