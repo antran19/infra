@@ -88,13 +88,15 @@ làm.
   Unit test cho domain/use case dùng Mockito, không cần Spring. Integration test cho
   repository adapter/outbox dùng **Testcontainers thật** (Postgres/Kafka), không mock DB.
 - **⚠️ MapStruct impl thiếu `implements` → "No qualifying bean of type ...ApiMapper"**:
-  nguyên nhân thật (tìm ra 2026-10-17 trên MacBook, build sạch vẫn tái hiện) là **bước biên
-  dịch test** (`test-compile`) ghi đè `*MapperImpl.class` trong `target/classes` bằng bản mất
-  `implements`. Gặp ở catalog-service; các service khác chưa thấy. `-DskipTests` vẫn biên dịch
-  test nên **không** tránh được; phải dùng `-Dmaven.test.skip=true` khi build jar để dựng Docker
-  (`build-all.sh` đã đổi sang cờ này). Kiểm tra nhanh: `javap -p -cp target/classes
-  <...>MapperImpl` phải thấy `implements`. Trước đây lỗi này bị đoán nhầm là do Windows không
-  xoá sạch `target/`. Chưa kiểm tra `mvn test` có bị ảnh hưởng không.
+  nguyên nhân (xác định 2026-10-17 trên MacBook) là **extension Java của IDE** (Red Hat Java /
+  JDT trong VS Code, Antigravity...) tự build vào `target/classes` bằng trình biên dịch Eclipse,
+  không chạy MapStruct, ghi đè `*MapperImpl.class` của Maven bằng bản thiếu `implements` (dấu
+  hiệu: `javap -v` thấy thuộc tính `InconsistentHierarchy`, chỉ Eclipse compiler sinh ra). Xảy
+  ra **ngẫu nhiên** (tranh nhau với IDE), ở mọi service IDE đang mở (đã gặp ở catalog-service và
+  user-service, cả khi build jar lẫn khi `mvn test`). Kiểm tra nhanh: `javap -p -cp target/classes
+  <...>MapperImpl` phải thấy `implements`. Cách tránh: đóng IDE khi build/test, hoặc tắt tự build
+  (`"java.autobuild.enabled": false`), hoặc build ở thư mục tạm (mục 9). CI không bị vì không có
+  IDE. (Ghi chú 2026-10-17 trước đó đổ cho bước biên dịch test là **sai**: chỉ trùng hợp.)
 
 ## 4. Trạng thái từng service (audit thật từ code ngày 2026-10-09, không suy đoán)
 
@@ -526,8 +528,14 @@ docker compose up -d
   thư mục thật dễ gây lỗi `NoClassDefFoundError`/mapper cũ. Cách ổn định: chép service ra thư
   mục tạm (loại `target/`), build và chạy test ở đó, rồi chép jar về `target/` khi cần dựng
   Docker.
-- **Build jar để dựng Docker**: dùng `-Dmaven.test.skip=true`, không dùng `-DskipTests` (xem
-  mục 3, bẫy MapStruct). `build-all.sh` đã làm vậy.
+- **IDE mở trên máy Mac cũng bị** y như Windows (xem mục 3, bẫy MapStruct): không phải lỗi của
+  Windows mà của extension Java tự build vào `target/`. `build-all.sh` dùng
+  `-Dmaven.test.skip=true` chỉ để build nhanh hơn, không tránh được lỗi này.
+- **Testcontainers 1.19.8 + Docker Engine 29** (Mac): Docker trả 400 vì API cũ → "Could not find
+  a valid Docker environment". Sửa cục bộ: `echo api.version=1.44 > ~/.docker-java.properties`.
+- **Mockito trên CI**: Mockito 5 tự gắn agent lúc chạy, runner GitHub không cho ("Could not
+  self-attach") → mọi test Mockito lỗi. Đã sửa 2026-10-17: surefire nạp `byte-buddy-agent` làm
+  `-javaagent` (pom của 7 service). Giả lập trên máy: `JDK_JAVA_OPTIONS=-XX:+DisableAttachMechanism`.
 - **Docker Desktop hay tắt** giữa chừng; test dùng Testcontainers sẽ báo "Could not find a
   valid Docker environment". Bật lại rồi chạy lại.
 - **Sửa `common-libs`**: bump version trong cả 5 `pom.xml`, `mvn install` để service build
