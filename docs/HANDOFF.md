@@ -313,8 +313,22 @@ biết**: bản sao trễ ~4 giây sau khi seller bật ACTIVE; sản phẩm t�
 409 + giữ giỏ, giỏ cũ có giá 1đ → đơn tính lại đúng giá); `smoke.py` 27/27, `smoke_auction.py`
 giai đoạn 1 30/30.
 
-⚠️/❌ **Vẫn thiếu**: kiểm tồn kho lúc thêm giỏ (đợt 2b) và lúc tạo đấu giá (đợt 2c), phí vận
-chuyển và thuế.
+✅ (2026-10-17) **Kiểm tồn kho khi thêm giỏ / sửa số lượng / checkout** (đợt 2b). fulfillment phát
+`InventoryLevelChanged {productId, availableQuantity}` (common-libs 1.13.0) qua
+`InventoryLevelNotifier`, gọi trong 4 use case gốc intake/reserve/release/commit (mọi thay đổi kho
+khác đều đi qua 4 cái này), cùng transaction với thay đổi kho nên giữ hàng nhiều món thất bại thì
+không phát gì. commerce lưu vào bảng riêng `product_stock_levels` (V9; tách khỏi
+`product_snapshots` vì khác topic, có thể đến trước ProductCreated), chỉ ghi khi sự kiện mới hơn
+(`as_of` = `occurredAt`, 1 câu `INSERT ... ON CONFLICT DO UPDATE ... WHERE as_of <= EXCLUDED.as_of`).
+Chưa có dòng kho = còn 0. `StockGuard` dùng chung: (trong giỏ + thêm) / số mới / số lượng lúc
+checkout vượt còn bán → 409 `INSUFFICIENT_STOCK`, giữ giỏ. Đây là **báo sớm**, bản sao trễ vài
+giây; chốt chặn vẫn là `tryReserve` của fulfillment + tự huỷ đơn khi giữ hàng thất bại. Verify sống
+16/16 (5 thêm 6 → 409, thêm đủ 5, nhập thêm → thêm được, sửa vượt → 409, người khác mua làm kho tụt →
+checkout 409 + giữ giỏ, huỷ đơn → kho trả lại; bản sao luôn khớp số của fulfillment). `smoke.py`
+26/26 (bước "đơn vượt kho tự huỷ" thành "thêm 999 bị 409 ngay"), `smoke_auction.py` 30/30.
+`cleanup.py` dọn cả 2 bảng mới.
+
+⚠️/❌ **Vẫn thiếu**: kiểm tồn kho lúc tạo đấu giá (đợt 2c), phí vận chuyển và thuế.
 
 ### notification-service (port 8084)
 ✅ Tự động ghi log mọi event nghe được từ Kafka (`auction-events`/`catalog-events`/
