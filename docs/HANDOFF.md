@@ -1,6 +1,6 @@
 # Project Nexus — Handoff / Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-16. File này tồn tại để 1 session Claude Code mới đọc xong là
+**Cập nhật lần cuối:** 2026-10-17. File này tồn tại để 1 session Claude Code mới đọc xong là
 nắm được toàn bộ trạng thái dự án **mà không cần đọc lại từng file code** — tốn ít token hơn
 nhiều so với tự khám phá lại từ đầu. Khi có thay đổi lớn (thêm service, đổi kiến trúc, fix bug
 quan trọng), **cập nhật file này** thay vì để nó lỗi thời như lần trước (bản cũ dừng ở lúc
@@ -87,11 +87,14 @@ làm.
 - **TDD bắt buộc**: viết test trước, chạy thấy RED, code tới khi GREEN, rồi mới sang việc tiếp.
   Unit test cho domain/use case dùng Mockito, không cần Spring. Integration test cho
   repository adapter/outbox dùng **Testcontainers thật** (Postgres/Kafka), không mock DB.
-- **⚠️ Bug môi trường đã gặp**: `mvn clean` trên máy Windows này **đôi khi không xoá sạch
-  `target/`** (nghi file bị khoá bởi tiến trình nền/IDE), để lại `.class` cũ không khớp source
-  mới (ví dụ MapStruct impl thiếu `implements`) → lỗi khó hiểu kiểu "No qualifying bean". Nếu
-  gặp lỗi Spring context load thất bại mà code nhìn đúng, **xoá tay `rm -rf target` rồi build
-  lại** trước khi nghi ngờ gì khác.
+- **⚠️ MapStruct impl thiếu `implements` → "No qualifying bean of type ...ApiMapper"**:
+  nguyên nhân thật (tìm ra 2026-10-17 trên MacBook, build sạch vẫn tái hiện) là **bước biên
+  dịch test** (`test-compile`) ghi đè `*MapperImpl.class` trong `target/classes` bằng bản mất
+  `implements`. Gặp ở catalog-service; các service khác chưa thấy. `-DskipTests` vẫn biên dịch
+  test nên **không** tránh được; phải dùng `-Dmaven.test.skip=true` khi build jar để dựng Docker
+  (`build-all.sh` đã đổi sang cờ này). Kiểm tra nhanh: `javap -p -cp target/classes
+  <...>MapperImpl` phải thấy `implements`. Trước đây lỗi này bị đoán nhầm là do Windows không
+  xoá sạch `target/`. Chưa kiểm tra `mvn test` có bị ảnh hưởng không.
 
 ## 4. Trạng thái từng service (audit thật từ code ngày 2026-10-09, không suy đoán)
 
@@ -518,6 +521,8 @@ docker compose up -d
   thư mục thật dễ gây lỗi `NoClassDefFoundError`/mapper cũ. Cách ổn định: chép service ra thư
   mục tạm (loại `target/`), build và chạy test ở đó, rồi chép jar về `target/` khi cần dựng
   Docker.
+- **Build jar để dựng Docker**: dùng `-Dmaven.test.skip=true`, không dùng `-DskipTests` (xem
+  mục 3, bẫy MapStruct). `build-all.sh` đã làm vậy.
 - **Docker Desktop hay tắt** giữa chừng; test dùng Testcontainers sẽ báo "Could not find a
   valid Docker environment". Bật lại rồi chạy lại.
 - **Sửa `common-libs`**: bump version trong cả 5 `pom.xml`, `mvn install` để service build

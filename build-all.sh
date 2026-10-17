@@ -18,11 +18,11 @@ for repo in common-libs discovery-server api-gateway user-service catalog-servic
 done
 
 echo "==> common-libs: mvn clean install"
-(cd ../common-libs && mvn -q clean install -DskipTests)
+(cd ../common-libs && mvn -q clean install -Dmaven.test.skip=true)
 
 for repo in discovery-server api-gateway user-service catalog-service auction-service notification-service commerce-service fulfillment-service; do
   echo "==> $repo: mvn clean package"
-  (cd "../$repo" && mvn -q clean package -DskipTests)
+  (cd "../$repo" && mvn -q clean package -Dmaven.test.skip=true)
 done
 
 echo "All jars built. Now run: docker compose build && docker compose up"
