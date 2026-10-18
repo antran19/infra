@@ -1,6 +1,6 @@
 # Project Nexus — Handoff / Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-17. File này tồn tại để 1 session Claude Code mới đọc xong là
+**Cập nhật lần cuối:** 2026-10-18. File này tồn tại để 1 session Claude Code mới đọc xong là
 nắm được toàn bộ trạng thái dự án **mà không cần đọc lại từng file code** — tốn ít token hơn
 nhiều so với tự khám phá lại từ đầu. Khi có thay đổi lớn (thêm service, đổi kiến trúc, fix bug
 quan trọng), **cập nhật file này** thay vì để nó lỗi thời như lần trước (bản cũ dừng ở lúc
@@ -194,9 +194,28 @@ mới hơn). `CreateAuctionUseCase` (sau kiểm uy tín + thời gian): không c
 toàn bộ lịch sử 2 topic (an toàn: chèn-nếu-chưa-có / chỉ-nhận-mới-hơn); sản phẩm tạo từ 16/10 (sự
 kiện có `sellerId`) có bản sao luôn. Verify sống 8/8 (B đấu giá đồ A → 403, DRAFT/không tồn tại →
 409, kho 0 → 409, nhập 1 → tạo được, chủ tạo đúng → 201), `smoke_auction.py` 30/30, `smoke.py` 26/26.
-⚠️ **Kho không được giữ trong suốt phiên**: món cuối bán qua giỏ khi phiên đang chạy → đơn người
-thắng tự huỷ vì hết hàng (không phạt người thắng). Muốn chặn hẳn phải giữ 1 cái từ lúc tạo phiên
-(auction ↔ fulfillment), chưa làm.
+✅ (2026-10-18) **Giữ 1 cái suốt phiên + đưa sản phẩm về bán lại khi người thắng bỏ cọc.**
+fulfillment `AuctionEventsListener` (nghe `auction-events` với `auto.offset.reset=latest` để KHÔNG
+giữ hàng cho các phiên cũ khi đọc lần đầu): `AuctionCreated` → `HoldForAuctionUseCase` giữ 1 cái
+mã `auction:<id>`, hạn 10 ngày (không `@Transactional` có chủ ý: giữ thất bại rollback riêng rồi mới
+ghi sự kiện) → thiếu hàng thì phát `AuctionHoldFailed` (common-libs 1.14.0) → auction
+`CancelAuctionForMissingStockUseCase` huỷ phiên PENDING/ACTIVE (`cancelledBy SYSTEM`).
+`AuctionFailed`/`AuctionCancelled`/`AuctionPaymentTimeout` → nhả. commerce
+`CreateOrderFromAuctionUseCase` **thôi xin giữ hàng** (đã có hàng giữ của phiên); `OrderPaid` có
+`auctionId` → fulfillment chốt hàng giữ của phiên; `OrderCancelled` có `auctionId` → nhả.
+`AuctionPaymentTimeoutEvent` mang thêm `productId` → catalog `RelistProductUseCase` SOLD → ACTIVE
+(chỉ từ SOLD) + commerce `CancelDefaultedAuctionOrderUseCase` huỷ đơn còn treo (chặn trả muộn sau
+24h). Verify sống 21/21 (giữ khi tạo, không mua thẳng được, không ai đặt giá/huỷ → nhả, thắng →
+không giữ cái thứ 2, bỏ cọc → nhả + ACTIVE + tạo phiên mới được, giữ thất bại → tự huỷ phiên, đơn
+thường giữ 35 phút); `smoke_auction.py` 33/33 + 3/3 (trả tiền → hàng giữ `auction:` COMMITTED, chỉ 1
+hàng giữ), `smoke.py` 26/26 + 10/10. **Phiên tạo trước bản sửa không có hàng giữ**: nếu thắng và trả
+tiền thì kho không bị trừ (log cảnh báo ở `CommitAuctionHoldUseCase`).
+
+✅ (2026-10-18) **Sửa lỗi hàng giữ hết hạn sau 15 phút** (có từ trước): mọi hàng giữ cố định 15 phút
+rồi `ExpireReservationsJob` tự nhả, trong khi đơn thường chờ trả tới 30 phút và đơn đấu giá tới 24h;
+trả tiền sau phút 15 thì bước chốt bỏ qua hàng đã nhả → **kho không bị trừ** (bán vượt). Giờ hạn
+theo từng lần giữ: đơn thường 35 phút (`Reservation.DEFAULT_HOLD`, dài hơn mốc tự huỷ 30 phút của
+commerce), hàng giữ cho phiên đấu giá 10 ngày.
 
 ❌ Chưa có: auction riêng tư (visibility public/restricted). (`MAX_ACTIVE_AUCTIONS_PER_SELLER` đã
 xác minh là có enforce, xem mục 6.)
