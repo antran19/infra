@@ -183,9 +183,23 @@ dưới TRUSTED không tạo đấu giá được được — đọc trực ti�
 Payment đã chuyển hẳn sang commerce-service xử lý (auction-service chỉ phát event, không tự
 tạo order/gọi Stripe nữa).
 
-❌ Chưa có: auction riêng tư (visibility public/restricted), check tường minh
-`MAX_ACTIVE_AUCTIONS_PER_SELLER` trong use case (có field nhưng chưa thấy enforce — **cần xác
-minh lại**, audit trước có thể sai chỗ này).
+✅ (2026-10-17) **Tạo phiên chỉ cho sản phẩm của chính seller, đang ACTIVE, còn kho** (đợt 2c).
+Trước đó không kiểm gì: seller B tạo được phiên cho đồng hồ của seller A, đơn người thắng ghi tên
+B (tiền, địa chỉ, quyền "đã giao") nhưng trừ kho + đánh SOLD sản phẩm của A. auction giữ bản sao
+riêng như commerce: `product_snapshots` (V6, chủ + trạng thái, từ `catalog-events`) và
+`product_stock_levels` (V7, từ `InventoryLevelChanged` trên `fulfillment-events`, chỉ ghi sự kiện
+mới hơn). `CreateAuctionUseCase` (sau kiểm uy tín + thời gian): không có bản sao / không ACTIVE →
+409 `PRODUCT_NOT_AVAILABLE`, khác chủ → 403 `NOT_THE_PRODUCT_OWNER`, kho < 1 → 409
+`INSUFFICIENT_STOCK`. Group Kafka `auto-offset-reset: earliest` nên lần đầu chạy auction đọc lại
+toàn bộ lịch sử 2 topic (an toàn: chèn-nếu-chưa-có / chỉ-nhận-mới-hơn); sản phẩm tạo từ 16/10 (sự
+kiện có `sellerId`) có bản sao luôn. Verify sống 8/8 (B đấu giá đồ A → 403, DRAFT/không tồn tại →
+409, kho 0 → 409, nhập 1 → tạo được, chủ tạo đúng → 201), `smoke_auction.py` 30/30, `smoke.py` 26/26.
+⚠️ **Kho không được giữ trong suốt phiên**: món cuối bán qua giỏ khi phiên đang chạy → đơn người
+thắng tự huỷ vì hết hàng (không phạt người thắng). Muốn chặn hẳn phải giữ 1 cái từ lúc tạo phiên
+(auction ↔ fulfillment), chưa làm.
+
+❌ Chưa có: auction riêng tư (visibility public/restricted). (`MAX_ACTIVE_AUCTIONS_PER_SELLER` đã
+xác minh là có enforce, xem mục 6.)
 
 ### commerce-service (port 8085)
 ✅ Giỏ hàng CRUD, checkout (giỏ→order), tạo order tự động từ `AuctionWonEvent` (Kafka), thanh
@@ -328,7 +342,8 @@ checkout 409 + giữ giỏ, huỷ đơn → kho trả lại; bản sao luôn kh�
 26/26 (bước "đơn vượt kho tự huỷ" thành "thêm 999 bị 409 ngay"), `smoke_auction.py` 30/30.
 `cleanup.py` dọn cả 2 bảng mới.
 
-⚠️/❌ **Vẫn thiếu**: kiểm tồn kho lúc tạo đấu giá (đợt 2c), phí vận chuyển và thuế.
+⚠️/❌ **Vẫn thiếu**: phí vận chuyển và thuế. (Kiểm kho lúc tạo đấu giá: xong ở đợt 2c, xem
+auction-service.)
 
 ### notification-service (port 8084)
 ✅ Tự động ghi log mọi event nghe được từ Kafka (`auction-events`/`catalog-events`/
