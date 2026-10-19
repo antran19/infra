@@ -1,10 +1,58 @@
 # Project Nexus — Handoff / Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-18. File này tồn tại để 1 session Claude Code mới đọc xong là
+**Cập nhật lần cuối:** 2026-10-19. File này tồn tại để 1 session Claude Code mới đọc xong là
 nắm được toàn bộ trạng thái dự án **mà không cần đọc lại từng file code** — tốn ít token hơn
 nhiều so với tự khám phá lại từ đầu. Khi có thay đổi lớn (thêm service, đổi kiến trúc, fix bug
 quan trọng), **cập nhật file này** thay vì để nó lỗi thời như lần trước (bản cũ dừng ở lúc
 auction-service còn chưa viết dòng code nào, trong khi thực tế đã xong rất nhiều).
+
+## 0. Đọc trước: phiên làm trên MacBook (2026-10-17 → 19)
+
+Mọi thứ dưới đây **đã commit + push lên GitHub, CI xanh** (chi tiết từng việc ở mục 4). Chưa sync
+sang GitLab monorepo (mục 1). Máy Windows cần: `git pull` cả 11 repo + `mac-handoff`, rồi **build
+lại toàn bộ** (mục 8) vì 5 service và `common-libs` (giờ **1.14.0**) đều đổi.
+
+**Đã làm:**
+1. **CI chạy thật cho 7 service.** api-gateway/catalog/auction đỏ từ 8–9/10 mà không ai biết:
+   Mockito 5 không tự gắn agent được trên runner GitHub ("Could not self-attach") → mọi test
+   Mockito lỗi. Sửa: surefire nạp `byte-buddy-agent` làm `-javaagent` (pom của 7 service). Thêm
+   `ci.yml` cho notification/commerce/fulfillment (trước chưa có CI). Retro Sprint 0 ghi "chưa có
+   CI" — giờ đã có.
+2. **Lỗ hổng giá giỏ hàng (2a):** trước đó gọi API với `unitPrice: 1` là mua được giá 1đ, `sellerId`
+   giả làm đơn hiện ở seller khác. Giờ commerce giữ bản sao sản phẩm (`product_snapshots`) từ
+   `catalog-events`, giá/tên/người bán lấy từ đó; checkout tính lại giá. Mã mới
+   `PRODUCT_NOT_AVAILABLE`, `CART_ITEM_UNAVAILABLE`.
+3. **Kiểm tồn kho khi thêm giỏ/sửa số lượng/checkout (2b):** fulfillment phát
+   `InventoryLevelChanged`, commerce giữ `product_stock_levels`. Mã mới `INSUFFICIENT_STOCK`.
+4. **Đấu giá đồ của người khác (2c):** trước đó seller B tạo được phiên cho sản phẩm của A (tiền
+   về B, kho của A bị trừ). Giờ auction giữ bản sao chủ/trạng thái/kho, từ chối với
+   `NOT_THE_PRODUCT_OWNER` (403), `PRODUCT_NOT_AVAILABLE`, `INSUFFICIENT_STOCK`.
+5. **Giữ 1 cái suốt phiên đấu giá + đưa sản phẩm về bán lại khi người thắng bỏ cọc** (gap #2,
+   chọn cách đơn giản: SOLD → ACTIVE, seller tự quyết bán tiếp/đấu giá lại).
+6. **Sửa lỗi có từ trước: hàng giữ hết hạn sau 15 phút** trong khi đơn chờ trả tới 30 phút (đấu
+   giá 24h) → trả tiền muộn thì kho không bị trừ (bán vượt). Đơn thường giờ giữ 35 phút.
+7. **Kiểm thử chạy thật mới:** `smoke_auction.py` (đấu giá → thanh toán, bỏ cọc, đơn quá hạn 30
+   phút) trong `mac-handoff/scripts`. Lần chạy cuối 2026-10-18: `smoke.py` 26/26 + 10/10,
+   `smoke_auction.py` 33/33 + 3/3, cả hai có trả thẻ Stripe thật.
+8. **Sửa ghi chú bẫy MapStruct** (mục 3, 9): lỗi "No qualifying bean ...ApiMapper" là do **extension
+   Java của IDE tự build đè `target/classes`**, không phải do Windows. Trên Windows vẫn gặp nếu mở
+   IDE lúc build: đóng IDE, tắt `java.autobuild.enabled`, hoặc build ở thư mục tạm.
+
+**Lưu ý khi chạy lần đầu trên Windows sau khi pull:**
+- `common-libs` 1.14.0 đã phát hành lên GitHub Packages; `build-all.sh` cũng tự `mvn install` nó.
+- `infra/.env` (khoá Stripe `sk_test_...`) **không nằm trong git**; máy Windows có sẵn file cũ thì
+  dùng tiếp, khoá trên Mac lấy ở Stripe Dashboard → Sandbox → Developers → API keys.
+- Lần đầu khởi động bản mới, **auction đọc lại toàn bộ lịch sử** `catalog-events` +
+  `fulfillment-events` (an toàn, chỉ tạo bản sao; có thể sinh bản sao cho sản phẩm thử đã xoá — vô
+  hại). Riêng listener `auction-events` của fulfillment đọc từ `latest` nên **không** giữ hàng cho
+  phiên cũ. Phiên tạo trước bản sửa không có hàng giữ: thắng + trả tiền thì kho không bị trừ.
+- Sản phẩm tạo trước 17/10 không có bản sao trong commerce → **không thêm vào giỏ được**; tạo sản
+  phẩm mới để thử. Sau khi bật ACTIVE/nhập kho, chờ vài giây mới thêm giỏ/tạo phiên được.
+- FE (`nexus-frontend`) **chưa** theo kịp: body thêm giỏ chỉ còn `productId` + `quantity`, các mã lỗi
+  mới ở trên, form địa chỉ, `initialStock`, nút nhập kho. `API.md` đã cập nhật đủ.
+
+**Việc tiếp theo đã bàn (chưa làm):** chốt A/B cho Sprint 1 (hạn 21/10) + hỏi tiến độ Khoa/Mai Anh
+(xem `mac-handoff/HANDOFF-PRIVATE.md`); FE cho các tính năng trên; dispute; push notification.
 
 ## 1. Bối cảnh
 
@@ -537,9 +585,11 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      localhost:9092 --topic commerce-events.DLT --from-beginning` (Git Bash trên Windows: thêm
      `MSYS_NO_PATHCONV=1` phía trước, không thì nó đổi `/opt/...` thành đường dẫn Windows). **Chưa có** công cụ chạy lại
      (replay) record từ DLT, cũng chưa có cảnh báo khi DLT có record mới.
+   - ✅ (2026-10-17→18) (g) kiểm giá + kho lúc thêm giỏ/checkout, kiểm chủ + kho lúc tạo phiên,
+     giữ hàng suốt phiên, gap #2 (bỏ cọc → sản phẩm về ACTIVE). Xem mục 0 và mục 4.
    - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (c) FE: form địa chỉ, nhập
-     `initialStock`, nút nhập thêm kho; (e) preference thông báo; (f) thống kê cho Seller;
-     (g) kiểm kho + giá lúc thêm giỏ/checkout, kiểm kho lúc tạo phiên đấu giá; (h) replay DLT.
+     `initialStock`, nút nhập thêm kho, body thêm giỏ mới + hiện các mã lỗi mới (mục 0);
+     (e) preference thông báo; (f) thống kê cho Seller; (h) replay DLT; dispute; push notification.
 
 *(Đánh dấu ✅ khi xong, cập nhật ngày + tóm tắt ngắn ở đây thay vì để trạng thái cũ.)*
 
@@ -560,6 +610,11 @@ cd infra
 docker compose build
 docker compose up -d
 ```
+Nếu `build-all.sh` báo không có quyền chạy (`permission denied`), dùng `bash build-all.sh`. Kiểm thử
+chạy thật (trong `mac-handoff/scripts`, chạy từ thư mục cha):
+`python3 mac-handoff/scripts/smoke.py` → trả thẻ ở link in ra → `... smoke.py after-payment`;
+tương tự `smoke_auction.py`; dọn: `python3 mac-handoff/scripts/cleanup.py` (dọn cả các bảng bản
+sao mới ở commerce/auction).
 
 - Cần `STRIPE_SECRET_KEY` (khoá **test**, `sk_test_...`) trong môi trường khi chạy
   `docker compose` (hoặc `infra/.env`, **không commit**). Compose đọc `${STRIPE_SECRET_KEY}`
@@ -614,9 +669,12 @@ docker compose up -d
 - **Mọi chỗ dùng `SELECT … FOR UPDATE`** cần `@Transactional` ở use case, nếu không Hibernate
   ném `TransactionRequiredException` (test mock repository sẽ che lỗi này).
 
-## 10. Chuyển sang máy khác (ví dụ MacBook)
+## 10. Chuyển sang máy khác (Windows ↔ MacBook)
 
-Mã nguồn đã nằm trên GitHub, không cần mang gì khác ngoài những thứ dưới đây.
+Mã nguồn đã nằm trên GitHub, không cần mang gì khác ngoài những thứ dưới đây. Mỗi lúc chỉ làm ở
+**một** máy; trước khi đổi máy, commit + push hết ở máy đang dùng. Máy đã có sẵn repo thì chỉ cần
+`git pull` từng repo (hoặc `bash mac-handoff/setup-mac.sh <thư mục cha>`, nó cũng pull repo đã có)
+rồi build lại như mục 8.
 
 1. Cài JDK 21, Maven, Docker Desktop, git và (nếu dùng) `gh`.
 2. Clone **11 repo cạnh nhau** trong một thư mục: `infra`, `common-libs`, `discovery-server`,
@@ -625,7 +683,9 @@ Mã nguồn đã nằm trên GitHub, không cần mang gì khác ngoài những 
 3. `~/.m2/settings.xml` với server `github` (tên người dùng + token `read:packages`) để tải
    `common-libs` đã phát hành. Hoặc `mvn install` `common-libs` cục bộ trước.
 4. Tạo `infra/.env` có `STRIPE_SECRET_KEY` thử (**không commit**).
-5. Build và chạy như mục 8.
+5. Build và chạy như mục 8. Mac với Docker Desktop mới (Engine 29): Testcontainers 1.19.8 cần
+   `echo api.version=1.44 > ~/.docker-java.properties` (mục 9), không thì test DB báo "Could not
+   find a valid Docker environment".
 6. Với Claude Code: mở thư mục cha chứa các repo, bảo nó đọc file này đầu tiên; `CLAUDE.md`
    của từng service sẽ được nạp khi làm việc trong thư mục đó. Những thứ **không** nằm trong
    git (hướng dẫn agent review, ghi nhớ cách làm việc cá nhân) phải chép riêng.
