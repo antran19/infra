@@ -574,22 +574,35 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      `reason = BUYER_REQUESTED`; lý do khác (hết hàng, ...) gọi `ClosePaymentWithoutPenaltyUseCase`
      (đặt cờ `payment_timeout_emitted` mà không phát event, để `PaymentDeadlineJob` không phạt
      sau 24h).
-   - ✅ (2026-10-16) **Retry + dead-letter cho Kafka** ở cả 6 service có listener: mỗi service
-     có `infrastructure/messaging/KafkaErrorHandlingConfig` (Spring Boot tự gắn vào mọi
-     listener). Listener không còn `catch (Exception)` nuốt lỗi. Lỗi → thử lại 3 lần (chờ 1s,
-     2s, 4s) → vẫn lỗi thì chép record sang topic `<topic>.DLT` và đi tiếp. JSON hỏng hoặc
-     `DomainException` (lỗi nghiệp vụ, thử lại vô ích) → vào DLT ngay. Notification: payload
-     không parse được ném `MalformedEventException` (cũng vào DLT ngay). Integration test thật
-     với Kafka: `notification-service/.../KafkaErrorHandlingIntegrationTest`. Xem DLT:
-     `docker exec infra-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server
-     localhost:9092 --topic commerce-events.DLT --from-beginning` (Git Bash trên Windows: thêm
-     `MSYS_NO_PATHCONV=1` phía trước, không thì nó đổi `/opt/...` thành đường dẫn Windows). **Chưa có** công cụ chạy lại
-     (replay) record từ DLT, cũng chưa có cảnh báo khi DLT có record mới.
+   - ✅ (2026-10-16, gom lại 2026-10-20) **Retry + dead-letter cho Kafka**, nay nằm trong module
+     **`common-kafka`** của common-libs **1.15.0** (auto-configuration, service chỉ cần thêm
+     dependency; 6 service đã thêm và xoá bản `KafkaErrorHandlingConfig` riêng). Listener không
+     `catch (Exception)` nuốt lỗi. Lỗi → thử lại 3 lần (chờ 1s, 2s, 4s) → vẫn lỗi thì chép record
+     sang **DLT riêng của service**: `<topic>.<tên-service>.DLT`, ví dụ
+     `commerce-events.fulfillment-service.DLT` (riêng từng service để replay không làm service
+     khác xử lý lại). JSON hỏng hoặc `DomainException` → vào DLT ngay. Notification: payload
+     không parse được ném `MalformedEventException`.
+   - ✅ (2026-10-20) **Xem / chạy lại DLT + báo khi kẹt** (`common-kafka`), có ở mọi service đọc
+     Kafka, gọi thẳng cổng service (không qua gateway), cần quyền `SYSTEM.DLT.MANAGE` (ADMIN, user
+     V17):
+     - `GET :808x/internal/dlt?peek=5`: số event đang chờ mỗi DLT + vài event cũ nhất kèm lý do lỗi.
+     - `POST :808x/internal/dlt/replay?max=100`: đưa từng event về **đúng listener của service đó**
+       (không publish lại lên topic gốc). Thành công thì ghi nhận (offset của group
+       `<service>-dlt-replay`), lỗi lại thì dừng và trả về event nào, lỗi gì; event vẫn nằm trong DLT.
+       Sửa nguyên nhân trước rồi mới replay. Chưa có lệnh "bỏ qua" event hỏng vĩnh viễn.
+     - Mỗi phút kiểm một lần: còn event chờ thì log WARN (xem trên Dozzle) và metric
+       `nexus.kafka.dlt.backlog{topic=...}`. Cố ý **không** làm health DOWN.
+     - Test Kafka thật: `notification-service/.../KafkaErrorHandlingIntegrationTest` (lỗi → DLT →
+       replay → xử lý đúng 1 lần; replay dừng ở event vẫn lỗi). WebMvc test 401/403:
+       `commerce-service/.../DeadLetterControllerTest`.
+     - Xem DLT bằng tay: `docker exec infra-kafka-1 /opt/kafka/bin/kafka-console-consumer.sh
+       --bootstrap-server localhost:9092 --topic commerce-events.fulfillment-service.DLT
+       --from-beginning` (Git Bash trên Windows: thêm `MSYS_NO_PATHCONV=1` phía trước).
    - ✅ (2026-10-17→18) (g) kiểm giá + kho lúc thêm giỏ/checkout, kiểm chủ + kho lúc tạo phiên,
      giữ hàng suốt phiên, gap #2 (bỏ cọc → sản phẩm về ACTIVE). Xem mục 0 và mục 4.
    - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (c) FE: form địa chỉ, nhập
      `initialStock`, nút nhập thêm kho, body thêm giỏ mới + hiện các mã lỗi mới (mục 0);
-     (e) preference thông báo; (f) thống kê cho Seller; (h) replay DLT; dispute; push notification.
+     (e) preference thông báo; (f) thống kê cho Seller; dispute; push notification.
 
 *(Đánh dấu ✅ khi xong, cập nhật ngày + tóm tắt ngắn ở đây thay vì để trạng thái cũ.)*
 
