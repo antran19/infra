@@ -600,6 +600,18 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
        --from-beginning` (Git Bash trên Windows: thêm `MSYS_NO_PATHCONV=1` phía trước).
    - ✅ (2026-10-17→18) (g) kiểm giá + kho lúc thêm giỏ/checkout, kiểm chủ + kho lúc tạo phiên,
      giữ hàng suốt phiên, gap #2 (bỏ cọc → sản phẩm về ACTIVE). Xem mục 0 và mục 4.
+   - ✅ (2026-10-21) **Dọn bảng outbox** ở 5 service có outbox (user, catalog, auction, commerce,
+     fulfillment): `OutboxCleanupJob` mỗi giờ xoá dòng **đã gửi** quá 7 ngày
+     (`nexus.outbox.retention-days`, `nexus.outbox.cleanup-interval-ms`). Dòng chưa gửi không bao
+     giờ bị xoá. Test: `OutboxJpaRepositoryTest` (Postgres thật), `OutboxCleanupJobTest`.
+   - ✅ (2026-10-21) **Checkout chống bấm hai lần** (commerce): trước đó `StartCheckoutUseCase` không
+     có `@Transactional` và không khoá giỏ, nên 2 request cùng lúc có thể tạo **2 đơn** từ một giỏ, và
+     lưu đơn / xoá giỏ / ghi outbox là 3 giao dịch rời nhau. Giờ: cả use case một transaction, khoá
+     dòng giỏ (`findByBuyerIdForUpdate`) trước tiên, header tuỳ chọn `Idempotency-Key` (bảng
+     `checkout_requests`, V10, unique `(buyer_id, key)`): gửi lại cùng mã trả lại đơn cũ. Mã cũ hơn 24h
+     bị `PurgeCheckoutRequestsJob` dọn. Test đồng thời với Postgres + Kafka thật:
+     `CheckoutConcurrencyIntegrationTest` (bỏ khoá thì 2/3 test đỏ, đã thử). Chưa bảo vệ: thêm món vào
+     giỏ đúng lúc đang checkout (không khoá) — hiếm, có từ trước.
    - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (c) FE: form địa chỉ, nhập
      `initialStock`, nút nhập thêm kho, body thêm giỏ mới + hiện các mã lỗi mới (mục 0);
      (e) preference thông báo; (f) thống kê cho Seller; dispute; push notification.
