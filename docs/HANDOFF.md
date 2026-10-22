@@ -1,6 +1,6 @@
 # Project Nexus — Handoff / Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-19. File này tồn tại để 1 session Claude Code mới đọc xong là
+**Cập nhật lần cuối:** 2026-10-22. File này tồn tại để 1 session Claude Code mới đọc xong là
 nắm được toàn bộ trạng thái dự án **mà không cần đọc lại từng file code** — tốn ít token hơn
 nhiều so với tự khám phá lại từ đầu. Khi có thay đổi lớn (thêm service, đổi kiến trúc, fix bug
 quan trọng), **cập nhật file này** thay vì để nó lỗi thời như lần trước (bản cũ dừng ở lúc
@@ -612,6 +612,17 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      bị `PurgeCheckoutRequestsJob` dọn. Test đồng thời với Postgres + Kafka thật:
      `CheckoutConcurrencyIntegrationTest` (bỏ khoá thì 2/3 test đỏ, đã thử). Chưa bảo vệ: thêm món vào
      giỏ đúng lúc đang checkout (không khoá) — hiếm, có từ trước.
+   - ✅ (2026-10-22) **Độ phủ test (JaCoCo)** ở 7 service (user, catalog, auction, commerce,
+     fulfillment, notification, api-gateway): plugin `jacoco-maven-plugin` 0.8.12 trong pom, báo cáo
+     ở `target/site/jacoco` (html, csv, xml) sau `mvn verify`. CI in bảng độ phủ vào trang kết quả
+     của lần chạy (Summary) và lưu báo cáo thành artifact `jacoco-report`. `argLine` của surefire
+     là `@{jacocoArgLine} -javaagent:...byte-buddy-agent...` (JaCoCo và agent của Mockito cùng
+     chạy); bỏ qua lớp sinh tự động `*MapperImpl` và `*Application`. Chưa đặt ngưỡng bắt buộc
+     (chưa chặn CI khi độ phủ thấp). Đo ngày 22/10 (dòng / nhánh):
+     user 96,0% / 89,1% (175 test), catalog 93,6% / 96,0% (103), auction 97,0% / 94,9% (145),
+     commerce 92,7% / 88,0% (245), fulfillment 94,6% / 91,4% (105), notification 91,4% / 87,0% (55),
+     api-gateway 92,1% / 86,7% (14). Tổng 842 test. Lưu ý: độ phủ chỉ cho biết dòng nào được chạy
+     qua, không cho biết test có kiểm đúng điều cần kiểm hay không.
    - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (c) FE: form địa chỉ, nhập
      `initialStock`, nút nhập thêm kho, body thêm giỏ mới + hiện các mã lỗi mới (mục 0);
      (e) preference thông báo; (f) thống kê cho Seller; dispute; push notification.
