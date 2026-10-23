@@ -637,6 +637,16 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      (ràng buộc cấp lớp, báo lỗi trên ô nhập lại). FE đã gửi `confirmPassword` và đổi quy tắc 6 thành 8
      ký tự; `smoke.py` cũng gửi trường mới. **API đăng ký không có `confirmPassword` giờ bị 400**: client
      nào gọi trực tiếp phải thêm trường này (đã ghi trong API.md mục 2.1 và 2.3).
+   - ✅ (2026-10-23) **Chấm điểm chỉ cho giao dịch có thật** (user-service, common-libs **1.17.0**):
+     commerce phát sự kiện mới `OrderShipped` (orderId, auctionId nếu từ đấu giá, buyerId, sellerId của
+     người bấm "đã giao", shippedAt) trong `MarkOrderShippedUseCase`; user-service nghe
+     `commerce-events` (`CommerceEventsListener`) và ghi bảng `ratable_transactions` (V18; đơn từ đấu
+     giá ghi hai dòng: ORDER và AUCTION). `POST /ratings` kiểm giao dịch có trong bảng (404
+     `TRANSACTION_NOT_FOUND`) và người chấm/người bị chấm đúng là hai bên (403 `NOT_A_PARTICIPANT`).
+     Không gọi sang commerce lúc chấm. Chỉ chấm được **sau khi người bán bấm "đã giao"**; đơn nhiều
+     người bán chỉ ghi người bán đã bấm (đơn chỉ có một `shippedAt`; sửa tận gốc cần lưu ngày giao
+     theo từng món, nên làm cùng trạng thái DELIVERED). Đơn đã giao **trước** khi có tính năng này
+     không có sự kiện `OrderShipped` nên chưa chấm được (bảng không tự bù ngược).
    - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (c) FE: form địa chỉ, nhập
      `initialStock`, nút nhập thêm kho, body thêm giỏ mới + hiện các mã lỗi mới (mục 0);
      (e) preference thông báo; (f) thống kê cho Seller; dispute; push notification.
