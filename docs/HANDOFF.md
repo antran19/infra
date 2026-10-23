@@ -1,6 +1,6 @@
 # Project Nexus — Handoff / Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-22. File này tồn tại để 1 session Claude Code mới đọc xong là
+**Cập nhật lần cuối:** 2026-10-23. File này tồn tại để 1 session Claude Code mới đọc xong là
 nắm được toàn bộ trạng thái dự án **mà không cần đọc lại từng file code** — tốn ít token hơn
 nhiều so với tự khám phá lại từ đầu. Khi có thay đổi lớn (thêm service, đổi kiến trúc, fix bug
 quan trọng), **cập nhật file này** thay vì để nó lỗi thời như lần trước (bản cũ dừng ở lúc
@@ -589,7 +589,13 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      - `POST :808x/internal/dlt/replay?max=100`: đưa từng event về **đúng listener của service đó**
        (không publish lại lên topic gốc). Thành công thì ghi nhận (offset của group
        `<service>-dlt-replay`), lỗi lại thì dừng và trả về event nào, lỗi gì; event vẫn nằm trong DLT.
-       Sửa nguyên nhân trước rồi mới replay. Chưa có lệnh "bỏ qua" event hỏng vĩnh viễn.
+       Sửa nguyên nhân trước rồi mới replay.
+     - `POST :808x/internal/dlt/skip?topic=<tên DLT>&count=1` (common-libs **1.16.1**): khi một event
+       **không bao giờ xử lý được** (payload hỏng) và làm replay dừng ở đó mãi, lệnh này dời con trỏ
+       "đã xử lý" của DLT qua `count` event cũ nhất (tối đa 100) mà không xử lý chúng. Event vẫn
+       nằm trong topic DLT, chỉ con trỏ của service này dời đi; nội dung event bị bỏ được ghi vào
+       log WARN (`DLT skip: dropping ...`) để truy vết. `topic` phải là DLT của chính service đó,
+       sai tên thì 404 `DEAD_LETTER_TOPIC_NOT_FOUND`. Dùng khi đã chắc event đó là rác.
      - Mỗi phút kiểm một lần: còn event chờ thì log WARN (xem trên Dozzle) và metric
        `nexus.kafka.dlt.backlog{topic=...}`. Cố ý **không** làm health DOWN.
      - Test Kafka thật: `notification-service/.../KafkaErrorHandlingIntegrationTest` (lỗi → DLT →
@@ -623,6 +629,14 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      commerce 92,7% / 88,0% (245), fulfillment 94,6% / 91,4% (105), notification 91,4% / 87,0% (55),
      api-gateway 92,1% / 86,7% (14). Tổng 842 test. Lưu ý: độ phủ chỉ cho biết dòng nào được chạy
      qua, không cho biết test có kiểm đúng điều cần kiểm hay không.
+   - ✅ (2026-10-23) **Nhập lại mật khẩu kiểm ở server** (user-service): đăng ký cần `confirmPassword`,
+     đổi mật khẩu và đặt lại mật khẩu cần `confirmNewPassword`; không khớp (so sánh chính xác, phân biệt
+     hoa thường) thì `400 VALIDATION_ERROR` với lỗi gắn vào ô nhập lại. Mật khẩu mới từ 8 đến 72 ký
+     tự (72 là giới hạn BCrypt), `email` và `fullName` tối đa 255. Tài khoản cũ có mật khẩu ngắn hơn vẫn
+     đăng nhập được (chỉ mật khẩu **mới** bị áp quy tắc). Cài ở `api/validation/PasswordsMatch`
+     (ràng buộc cấp lớp, báo lỗi trên ô nhập lại). FE đã gửi `confirmPassword` và đổi quy tắc 6 thành 8
+     ký tự; `smoke.py` cũng gửi trường mới. **API đăng ký không có `confirmPassword` giờ bị 400**: client
+     nào gọi trực tiếp phải thêm trường này (đã ghi trong API.md mục 2.1 và 2.3).
    - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (c) FE: form địa chỉ, nhập
      `initialStock`, nút nhập thêm kho, body thêm giỏ mới + hiện các mã lỗi mới (mục 0);
      (e) preference thông báo; (f) thống kê cho Seller; dispute; push notification.
@@ -678,6 +692,14 @@ sao mới ở commerce/auction).
   uy tín.
 
 ## 9. Bẫy đã gặp (đọc trước khi vào việc)
+
+- **Phát hành `common-libs` hỏng giữa chừng thì phải đổi số phiên bản.** `mvn deploy` đẩy từng module theo
+  thứ tự; nếu test của một module sau (ví dụ `common-kafka`) đỏ thì các module trước đã nằm trên
+  GitHub Packages, và GitHub Packages **không cho ghi đè** một phiên bản (lỗi `409`). Ngày 23/10
+  `1.16.0` bị như vậy (chỉ có parent, core, web, events, security, thiếu `common-kafka`), nên dùng
+  **`1.16.1`**; đừng dùng `1.16.0`. Trước khi push `common-libs`, chạy `mvn clean install` (có test) ở
+  bản sao tạm. Test trong `common-libs` **không được dùng Mockito** (module không có agent
+  byte-buddy, Mockito không tự gắn được trên máy chủ CI; ở máy bạn vẫn chạy được nên dễ bị lọt).
 
 - **Build trên Windows với IDE mở**: IDE tự biên dịch vào `target/`, build trực tiếp trong
   thư mục thật dễ gây lỗi `NoClassDefFoundError`/mapper cũ. Cách ổn định: chép service ra thư
