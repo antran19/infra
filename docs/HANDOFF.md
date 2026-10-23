@@ -647,6 +647,8 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      người bán chỉ ghi người bán đã bấm (đơn chỉ có một `shippedAt`; sửa tận gốc cần lưu ngày giao
      theo từng món, nên làm cùng trạng thái DELIVERED). Đơn đã giao **trước** khi có tính năng này
      không có sự kiện `OrderShipped` nên chưa chấm được (bảng không tự bù ngược).
+     **Gateway:** thêm `/api/v1/ratings/**` vào route của user-service (trước đó gateway trả 404 cho
+     API này dù `API.md` ghi cho FE dùng, nên FE chưa chấm điểm được).
    - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (c) FE: form địa chỉ, nhập
      `initialStock`, nút nhập thêm kho, body thêm giỏ mới + hiện các mã lỗi mới (mục 0);
      (e) preference thông báo; (f) thống kê cho Seller; dispute; push notification.
