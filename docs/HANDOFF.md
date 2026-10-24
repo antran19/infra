@@ -1,6 +1,6 @@
 # Project Nexus — Handoff / Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-23. File này tồn tại để 1 session Claude Code mới đọc xong là
+**Cập nhật lần cuối:** 2026-10-24. File này tồn tại để 1 session Claude Code mới đọc xong là
 nắm được toàn bộ trạng thái dự án **mà không cần đọc lại từng file code** — tốn ít token hơn
 nhiều so với tự khám phá lại từ đầu. Khi có thay đổi lớn (thêm service, đổi kiến trúc, fix bug
 quan trọng), **cập nhật file này** thay vì để nó lỗi thời như lần trước (bản cũ dừng ở lúc
@@ -649,6 +649,21 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      không có sự kiện `OrderShipped` nên chưa chấm được (bảng không tự bù ngược).
      **Gateway:** thêm `/api/v1/ratings/**` vào route của user-service (trước đó gateway trả 404 cho
      API này dù `API.md` ghi cho FE dùng, nên FE chưa chấm điểm được).
+   - ✅ (2026-10-24) **Ba việc nhỏ về an toàn dữ liệu:**
+     - *Mật khẩu tính theo BYTE* (user-service): BCrypt chỉ dùng 72 byte đầu, mà chữ có dấu tiếng Việt
+       chiếm 3 byte, nên `@Size(max=72)` (đếm ký tự) chưa đủ. Thêm `@MaxUtf8Bytes` ở đăng ký, đổi, đặt
+       lại, admin đặt mật khẩu; `POST /users` của admin trước đó **không có quy tắc mật khẩu nào**, nay
+       cùng quy tắc 8 đến 72.
+     - *`successUrl` và `cancelUrl` của phiên thanh toán* (commerce-service): phải nằm trên địa chỉ của
+       FE (`nexus.checkout.allowed-redirect-origins`, mặc định `http://localhost:5173` và `:3000`,
+       cấu hình thành địa chỉ FE thật khi triển khai; để trống thì từ chối hết). `RedirectUrlPolicy` so
+       địa chỉ **đã phân tích** (scheme + host + cổng), nên `http://localhost:5173.evil.com` và
+       `http://localhost:5173@evil.com` bị chặn như `javascript:` hay địa chỉ tương đối. Sai thì
+       `400 VALIDATION_ERROR` ở ô `successUrl` hoặc `cancelUrl`.
+     - *`CHECK` cho `orders.status`* (commerce V11): chỉ nhận AWAITING_PAYMENT, PAID, CANCELLED,
+       REFUNDED. Thêm giá trị vào `OrderStatus` mà quên mở rộng ràng buộc thì test
+       `everyOrderStatusOfTheEnum_...` đỏ. Các cột `status` khác (`return_requests`, `product_snapshots`,
+       auction...) **chưa** có CHECK, làm tương tự khi cần.
    - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (c) FE: form địa chỉ, nhập
      `initialStock`, nút nhập thêm kho, body thêm giỏ mới + hiện các mã lỗi mới (mục 0);
      (e) preference thông báo; (f) thống kê cho Seller; dispute; push notification.
