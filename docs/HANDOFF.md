@@ -1,6 +1,6 @@
 # Project Nexus — Handoff / Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-24. File này tồn tại để 1 session Claude Code mới đọc xong là
+**Cập nhật lần cuối:** 2026-10-28. File này tồn tại để 1 session Claude Code mới đọc xong là
 nắm được toàn bộ trạng thái dự án **mà không cần đọc lại từng file code** — tốn ít token hơn
 nhiều so với tự khám phá lại từ đầu. Khi có thay đổi lớn (thêm service, đổi kiến trúc, fix bug
 quan trọng), **cập nhật file này** thay vì để nó lỗi thời như lần trước (bản cũ dừng ở lúc
@@ -265,6 +265,8 @@ trả tiền sau phút 15 thì bước chốt bỏ qua hàng đã nhả → **kh
 theo từng lần giữ: đơn thường 35 phút (`Reservation.DEFAULT_HOLD`, dài hơn mốc tự huỷ 30 phút của
 commerce), hàng giữ cho phiên đấu giá 10 ngày.
 
+✅ (2026-10-28) **CHECK ở DB** cho `auctions` và `bids` (V8), xem mục 6 (đợt dọn nhỏ).
+
 ❌ Chưa có: auction riêng tư (visibility public/restricted). (`MAX_ACTIVE_AUCTIONS_PER_SELLER` đã
 xác minh là có enforce, xem mục 6.)
 
@@ -429,6 +431,8 @@ bằng cách đọc log này (xem commit `2ef9fd7`). Khi có SMTP credentials th
 
 ❌ **Vẫn thiếu**: push notification thật (chỉ email). Không có preference người dùng.
 Không có retry/delivery-status khi gửi email thất bại (log lỗi rồi bỏ qua, fail-soft).
+Sự kiện giao trùng (Kafka at-least-once) không tạo thêm dòng thông báo **và không gửi lại email**
+(từ 2026-10-28; trước đó email vẫn gửi mỗi lần giao).
 (2026-10-13→15) **Health-check broker** (`BrokerHealthJob` 15s/lần, `BrokerHealthIndicator`
 trên `/actuator/health`; Kafka sập đủ ngưỡng thì tự tạm dừng consumer và ghi
 `MessageBrokerUnavailable`, hồi phục thì tiếp tục và ghi `MessageBrokerRecovered`),
@@ -662,8 +666,28 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
        `400 VALIDATION_ERROR` ở ô `successUrl` hoặc `cancelUrl`.
      - *`CHECK` cho `orders.status`* (commerce V11): chỉ nhận AWAITING_PAYMENT, PAID, CANCELLED,
        REFUNDED. Thêm giá trị vào `OrderStatus` mà quên mở rộng ràng buộc thì test
-       `everyOrderStatusOfTheEnum_...` đỏ. Các cột `status` khác (`return_requests`, `product_snapshots`,
-       auction...) **chưa** có CHECK, làm tương tự khi cần.
+       `everyOrderStatusOfTheEnum_...` đỏ. `auctions.status` đã có CHECK từ 28/10 (xem dưới). Các cột
+       `status` khác (`return_requests`, `product_snapshots`...) **chưa** có CHECK, làm tương tự khi cần.
+   - ✅ (2026-10-26 → 28) **Đợt dọn nhỏ sau khi rà soát:**
+     - *CHECK cho `auctions` và `bids`* (auction-service V8): `status` chỉ nhận PENDING, ACTIVE, ENDED,
+       CANCELLED; `end_time > start_time`; `starting_price`, `bid_increment` và `bids.amount` lớn hơn 0.
+       Trước đó các luật này chỉ nằm trong Java (enum `AuctionStatus`, `validateWindow`, validate request).
+       `AuctionCheckConstraintsTest` (13 test) thử từng giá trị sai. Thêm giá trị vào `AuctionStatus` mà
+       quên mở rộng ràng buộc thì INSERT bị DB từ chối.
+     - *Không gửi email lần hai khi Kafka giao lại sự kiện* (notification-service): `event_id` UNIQUE vốn
+       đã giữ một dòng thông báo, nhưng email vẫn gửi mỗi lần giao. `NotificationRepositoryPort.record`
+       giờ trả `true/false` (có ghi mới hay không); bản trùng trả `Resolution.ALREADY_RECORDED` nên bước
+       gửi email bỏ qua.
+     - *`API.md` khớp với code:* bổ sung các mã lỗi service ném ra nhưng tài liệu chưa có (vai trò, đặt
+       giá, sửa/hủy phiên, thông báo, quên mật khẩu, phiên thanh toán không khớp đơn, bảng mã dùng chung);
+       sửa luật đặt giá đầu tiên (chỉ cần `>= startingPrice`, không cộng bước giá).
+     - *Script kiểm tra mã lỗi:* `python scripts/check_error_codes.py` (trong repo này) quét mã lỗi các
+       service ném ra và so với `nexus-frontend/API.md`; thoát mã 1 nếu có mã chưa được ghi. Chạy trước khi
+       thêm mã lỗi mới. Chưa gắn vào CI (API.md nằm ở repo khác).
+     - *FE (`nexus-frontend`):* thêm giỏ hàng, checkout (`Idempotency-Key`, địa chỉ giao hàng, chuyển sang
+       Stripe, trang thành công/hủy có thử lại `confirm-payment`), thông báo lỗi tiếng Việt cho 401/403/hết
+       kho, bỏ dữ liệu mẫu giả ở danh sách và trang chủ (lỗi thì hiện nút thử lại), giao diện các trang
+       trong đồng bộ với landing. Mới build/lint, **chưa chạy trọn luồng thanh toán trên cụm thật**.
    - ⬜ **Việc còn lại, theo ưu tiên gợi ý**: (c) FE: form địa chỉ, nhập
      `initialStock`, nút nhập thêm kho, body thêm giỏ mới + hiện các mã lỗi mới (mục 0);
      (e) preference thông báo; (f) thống kê cho Seller; dispute; push notification.
