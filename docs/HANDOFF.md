@@ -684,6 +684,14 @@ claim (token cũ) → fail-open (không chặn), xem comment trong `PlaceBidUseC
      - *Script kiểm tra mã lỗi:* `python scripts/check_error_codes.py` (trong repo này) quét mã lỗi các
        service ném ra và so với `nexus-frontend/API.md`; thoát mã 1 nếu có mã chưa được ghi. Chạy trước khi
        thêm mã lỗi mới. Chưa gắn vào CI (API.md nằm ở repo khác).
+     - *Chuyển trạng thái phiên đấu giá* (auction-service): `AuctionStatus.canTransitionTo` + `Auction.withStatus`
+       từ chối bước ngoài vòng đời (PENDING → ACTIVE → ENDED; CANCELLED từ PENDING hoặc ACTIVE; ENDED và CANCELLED
+       là cuối) bằng `409 INVALID_AUCTION_TRANSITION`. Dựng dữ liệu test phải đi qua các bước hợp lệ (không thể
+       tạo thẳng phiên ENDED từ PENDING).
+     - *Quên mật khẩu* (user-service): `POST /auth/forgot-password` luôn trả cùng một phản hồi chung (`data.message`)
+       và **không** còn trả mã đặt lại mật khẩu; email không tồn tại không còn báo `404 EMAIL_NOT_FOUND`. Mã chỉ đi
+       trong sự kiện `PasswordResetRequested` để notification-service gửi email. **Khi chạy cục bộ chưa có SMTP**,
+       lấy mã từ log của notification-service (dòng "would have sent", nội dung có mã), rồi gọi `reset-password`.
      - *FE (`nexus-frontend`):* thêm giỏ hàng, checkout (`Idempotency-Key`, địa chỉ giao hàng, chuyển sang
        Stripe, trang thành công/hủy có thử lại `confirm-payment`), thông báo lỗi tiếng Việt cho 401/403/hết
        kho, bỏ dữ liệu mẫu giả ở danh sách và trang chủ (lỗi thì hiện nút thử lại), giao diện các trang
