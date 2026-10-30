@@ -1,6 +1,6 @@
 # Project Nexus — Handoff / Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-28. File này tồn tại để 1 session Claude Code mới đọc xong là
+**Cập nhật lần cuối:** 2026-10-30. File này tồn tại để 1 session Claude Code mới đọc xong là
 nắm được toàn bộ trạng thái dự án **mà không cần đọc lại từng file code** — tốn ít token hơn
 nhiều so với tự khám phá lại từ đầu. Khi có thay đổi lớn (thêm service, đổi kiến trúc, fix bug
 quan trọng), **cập nhật file này** thay vì để nó lỗi thời như lần trước (bản cũ dừng ở lúc
@@ -51,7 +51,7 @@ lại toàn bộ** (mục 8) vì 5 service và `common-libs` (giờ **1.14.0**) 
 - FE (`nexus-frontend`) **chưa** theo kịp: body thêm giỏ chỉ còn `productId` + `quantity`, các mã lỗi
   mới ở trên, form địa chỉ, `initialStock`, nút nhập kho. `API.md` đã cập nhật đủ.
 
-**Việc tiếp theo đã bàn (chưa làm):** chốt A/B cho Sprint 1 (hạn 21/10) + hỏi tiến độ Khoa/Mai Anh
+**Việc tiếp theo đã bàn (chưa làm):** chốt A/B cho Sprint 1 (hạn 21/10) + hỏi tiến độ các thành viên
 (xem `mac-handoff/HANDOFF-PRIVATE.md`); FE cho các tính năng trên; dispute; push notification.
 
 ## 1. Bối cảnh
@@ -266,6 +266,12 @@ theo từng lần giữ: đơn thường 35 phút (`Reservation.DEFAULT_HOLD`, d
 commerce), hàng giữ cho phiên đấu giá 10 ngày.
 
 ✅ (2026-10-28) **CHECK ở DB** cho `auctions` và `bids` (V8), xem mục 6 (đợt dọn nhỏ).
+
+✅ (2026-10-30) **CHECK ở DB cho các cột status còn lại**: `products.status` ∈ DRAFT/ACTIVE/INACTIVE/SOLD
+và `skus.price > 0` (catalog-service V6); `seller_requests.status` ∈ PENDING/APPROVED/REJECTED
+(user-service V19, chỉ mục unique từng phần của V8 phụ thuộc đúng giá trị `'PENDING'`). Test:
+`CatalogCheckConstraintsTest`, `SellerRequestCheckConstraintTest`. Chưa làm: CHECK cho `outbox`
+(không có cột status, dùng `published_at`).
 
 ❌ Chưa có: auction riêng tư (visibility public/restricted). (`MAX_ACTIVE_AUCTIONS_PER_SELLER` đã
 xác minh là có enforce, xem mục 6.)
