@@ -1,6 +1,6 @@
 # Project Nexus — Handoff / Trạng thái hiện tại
 
-**Cập nhật lần cuối:** 2026-10-30. File này tồn tại để 1 session Claude Code mới đọc xong là
+**Cập nhật lần cuối:** 2026-11-02. File này tồn tại để 1 session Claude Code mới đọc xong là
 nắm được toàn bộ trạng thái dự án **mà không cần đọc lại từng file code** — tốn ít token hơn
 nhiều so với tự khám phá lại từ đầu. Khi có thay đổi lớn (thêm service, đổi kiến trúc, fix bug
 quan trọng), **cập nhật file này** thay vì để nó lỗi thời như lần trước (bản cũ dừng ở lúc
@@ -272,6 +272,27 @@ và `skus.price > 0` (catalog-service V6); `seller_requests.status` ∈ PENDING/
 (user-service V19, chỉ mục unique từng phần của V8 phụ thuộc đúng giá trị `'PENDING'`). Test:
 `CatalogCheckConstraintsTest`, `SellerRequestCheckConstraintTest`. Chưa làm: CHECK cho `outbox`
 (không có cột status, dùng `published_at`).
+
+✅ (2026-11-02) **Xem giá trực tiếp (SSE)**: `GET /api/v1/auctions/{id}/stream` (public). `SseBidBroadcaster`
+giữ các kết nối theo phiên trong bộ nhớ và chỉ đẩy lượt giá **sau khi transaction commit** (qua
+`BidBroadcastPort` gọi từ `PlaceBidUseCase`). Chỉ đúng khi chạy một bản auction-service. Đã thử thật qua
+gateway: sự kiện tới sau ~0,02 giây. Test: `SseBidBroadcasterTest`, `AuctionStreamIntegrationTest`.
+
+✅ (2026-11-01/02) **Nền cho đặt giá tự động (chưa hoàn tất)**: bảng `auto_bids` (V10, UNIQUE theo
+phiên+người, `created_at` giữ nguyên để phân thắng thua khi hai mức bằng nhau), `AutoBid`,
+`SetAutoBidUseCase` (mức tối đa chỉ được **nâng**, hạ trả `409 AUTO_BID_CANNOT_BE_LOWERED`). **Chưa có**
+thuật toán tự ra giá và endpoint; luật còn chờ chốt: giá cuối khi mức thắng hơn mức thua chưa đủ một
+bước giá (đề xuất: bằng đúng mức tối đa của người thắng).
+
+✅ (2026-11-02) **Chạy thật cả cụm sau khi build lại** (smoke đấu giá 33/33, smoke tổng 26/26 tới bước
+Stripe). Tìm ra và sửa 2 lỗi mà test từng service không thấy:
+- **api-gateway chặn forgot-password/reset-password bằng 401** (`JwtValidationGlobalFilter` chỉ cho
+  `register` và `login` đi qua không token) → quên mật khẩu hỏng với người dùng thật dù gọi thẳng
+  user-service vẫn 200. Đã thêm 2 đường POST đó vào danh sách công khai. **Bài học: thêm đường công khai
+  ở một service thì phải thêm cả ở gateway.** Luồng đã thử thật: quên mật khẩu → mã trong email (log) →
+  đổi mật khẩu (cần `confirmNewPassword`) → đăng nhập mật khẩu mới → dùng lại mã bị `INVALID_RESET_TOKEN`.
+- **notification-service luôn báo DOWN (503)** vì health check của mail cố nối SMTP khi chưa có tài khoản.
+  Giờ tắt mặc định, bật bằng `MAIL_HEALTH_ENABLED=true` cùng `MAIL_USERNAME/MAIL_PASSWORD`.
 
 ❌ Chưa có: auction riêng tư (visibility public/restricted). (`MAX_ACTIVE_AUCTIONS_PER_SELLER` đã
 xác minh là có enforce, xem mục 6.)
