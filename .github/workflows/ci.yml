@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fails on a YAML mistake, an unknown key, or a reference to something that does not exist
+      # (for example a service named in depends_on but not defined). Nothing is started.
+      - name: Validate docker-compose.yml
+        run: docker compose -f docker-compose.yml config --quiet
+
+      # The scripts are plain Python with no dependencies; this catches a syntax error early.
+      - name: Check that the scripts compile
+        run: python -m py_compile scripts/*.py
